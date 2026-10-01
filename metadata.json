@@ -1,0 +1,6 @@
+{
+  "name": "GoNovelist — Desktop Writing Assistant & Go/Fyne Architecture",
+  "description": "Cross-platform novel writing studio and complete Go (Golang) + Fyne v2 + SQLite desktop application source architecture with hierarchical Act/Chapter/Scene management, distraction-free editor, metadata mapping, and manuscript export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
