@@ -55,31 +55,31 @@ type WorldBuildingHub struct {
 	selectedEventID int64
 
 	// Biểu mẫu Tab 1: Nhân vật
-	charNameEntry *widget.Entry
-	charRoleEntry *widget.Entry
-	charDescEntry *widget.Entry
+	charNameEntry *VietnameseEntry
+	charRoleEntry *VietnameseEntry
+	charDescEntry *VietnameseEntry
 	charTagCheck  *widget.CheckGroup
 
 	// Biểu mẫu Tab 2: Địa điểm
-	locNameEntry *widget.Entry
-	locDescEntry *widget.Entry
+	locNameEntry *VietnameseEntry
+	locDescEntry *VietnameseEntry
 	locTagCheck  *widget.CheckGroup
 
 	// Biểu mẫu Tab 3: Vật phẩm
-	propNameEntry *widget.Entry
-	propCatEntry  *widget.Entry
-	propDescEntry *widget.Entry
-	propSigEntry  *widget.Entry
+	propNameEntry *VietnameseEntry
+	propCatEntry  *VietnameseEntry
+	propDescEntry *VietnameseEntry
+	propSigEntry  *VietnameseEntry
 	propTagCheck  *widget.CheckGroup
 
 	// Biểu mẫu Tab 4: Sự kiện
-	eventTitleEntry *widget.Entry
+	eventTitleEntry *VietnameseEntry
 	eventOrderEntry *widget.Entry
-	eventDescEntry  *widget.Entry
+	eventDescEntry  *VietnameseEntry
 	eventTagCheck   *widget.CheckGroup
 
 	// Biểu mẫu Quản lý Thẻ toàn cục
-	newTagEntry *widget.Entry
+	newTagEntry *VietnameseEntry
 }
 
 // ShowWorldBuildingHub mở Trung tâm Quản lý Thế giới & Hệ thống Thẻ Đa năng (Multi-Tab Dialog).

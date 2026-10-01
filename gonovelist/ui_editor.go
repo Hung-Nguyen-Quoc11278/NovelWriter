@@ -26,11 +26,11 @@ type EditorPanel struct {
 	loading     bool
 	saveTimer   *time.Timer
 
-	// Các khung nhập văn bản trung tâm (Hỗ trợ gõ Tiếng Việt Telex & Unicode)
-	titleEntry       *widget.Entry
-	summaryEntry     *widget.Entry
-	proseEntry       *widget.Entry
-	targetWordsEntry *widget.Entry
+	// Các khung nhập văn bản trung tâm (Hỗ trợ gõ Tiếng Việt Telex & Khóa cứng con trỏ dòng)
+	titleEntry       *VietnameseEntry
+	summaryEntry     *VietnameseEntry
+	proseEntry       *VietnameseEntry
+	targetWordsEntry *VietnameseEntry
 
 	// Thanh tiến độ và đếm từ thời gian thực
 	sceneWordLabel   *widget.Label
@@ -46,7 +46,7 @@ type EditorPanel struct {
 	charactersCheck *widget.CheckGroup
 	propsCheck      *widget.CheckGroup
 	eventsCheck     *widget.CheckGroup
-	sideNotesEntry  *widget.Entry
+	sideNotesEntry  *VietnameseEntry
 	inspectorTabs   *container.AppTabs
 	splitContainer  *container.Split
 
@@ -71,28 +71,27 @@ func NewEditorPanel(store *Store, window fyne.Window, projectID int64, onSaved f
 }
 
 func (ep *EditorPanel) buildUI() {
-	ep.titleEntry = widget.NewEntry()
+	ep.titleEntry = NewVietnameseEntry()
 	ep.titleEntry.SetPlaceHolder("Nhập tiêu đề cảnh (hỗ trợ gõ Tiếng Việt)...")
-	AttachVietnameseTelex(ep.titleEntry, func(_ string) {
+	ep.titleEntry.SetOnChangedCallback(func(_ string) {
 		ep.scheduleAutoSave()
 	})
 
-	ep.summaryEntry = widget.NewEntry()
+	ep.summaryEntry = NewVietnameseEntry()
 	ep.summaryEntry.SetPlaceHolder("Tóm tắt ngắn gọn nội dung hoặc mục đích kịch tính của cảnh...")
-	AttachVietnameseTelex(ep.summaryEntry, func(_ string) {
+	ep.summaryEntry.SetOnChangedCallback(func(_ string) {
 		ep.scheduleAutoSave()
 	})
 
-	ep.targetWordsEntry = widget.NewEntry()
+	ep.targetWordsEntry = NewVietnameseEntry()
 	ep.targetWordsEntry.SetPlaceHolder("1200")
-	ep.targetWordsEntry.OnChanged = func(_ string) {
+	ep.targetWordsEntry.SetOnChangedCallback(func(_ string) {
 		ep.scheduleAutoSave()
-	}
+	})
 
-	ep.proseEntry = widget.NewMultiLineEntry()
-	ep.proseEntry.Wrapping = fyne.TextWrapWord
+	ep.proseEntry = NewVietnameseMultiLineEntry()
 	ep.proseEntry.SetPlaceHolder("Bắt đầu viết nội dung cảnh bằng tiếng Việt tại đây... Mọi thay đổi sẽ được tự động lưu vào SQLite.")
-	AttachVietnameseTelex(ep.proseEntry, func(_ string) {
+	ep.proseEntry.SetOnChangedCallback(func(_ string) {
 		ep.updateLiveWordCounts()
 		ep.scheduleAutoSave()
 	})
@@ -129,10 +128,9 @@ func (ep *EditorPanel) buildUI() {
 		ep.scheduleAutoSave()
 	})
 
-	ep.sideNotesEntry = widget.NewMultiLineEntry()
-	ep.sideNotesEntry.Wrapping = fyne.TextWrapWord
+	ep.sideNotesEntry = NewVietnameseMultiLineEntry()
 	ep.sideNotesEntry.SetPlaceHolder("Ghi chú bên lề, ý tưởng đột xuất, câu thoại nháp hoặc tư liệu lịch sử cho cảnh này...")
-	AttachVietnameseTelex(ep.sideNotesEntry, func(_ string) {
+	ep.sideNotesEntry.SetOnChangedCallback(func(_ string) {
 		ep.scheduleAutoSave()
 	})
 
@@ -416,12 +414,18 @@ func (ep *EditorPanel) scheduleAutoSave() {
 	if ep.saveTimer != nil {
 		ep.saveTimer.Stop()
 	}
-	ep.saveTimer = time.AfterFunc(750*time.Millisecond, func() {
+	ep.saveTimer = time.AfterFunc(900*time.Millisecond, func() {
+		// Nếu người dùng vẫn đang gõ liên tục, hoãn thêm một nhịp ngắn để tránh tranh chấp trạng thái con trỏ
+		if ep.proseEntry != nil && ep.proseEntry.IsActivelyTyping(650*time.Millisecond) {
+			ep.scheduleAutoSave()
+			return
+		}
 		ep.FlushPendingSave()
 	})
 }
 
-// FlushPendingSave ghi ngay lập tức mọi thay đổi của Cảnh (bao gồm Vật phẩm & Sự kiện trong cảnh) xuống SQLite.
+// FlushPendingSave ghi ngay lập tức mọi thay đổi của Cảnh (bao gồm Vật phẩm & Sự kiện trong cảnh) xuống SQLite
+// mà vẫn bảo toàn tuyệt đối vị trí con trỏ (caret) trên dòng đang chọn của người dùng.
 func (ep *EditorPanel) FlushPendingSave() {
 	ep.mu.Lock()
 	if ep.loading || ep.activeScene == nil {
@@ -431,6 +435,11 @@ func (ep *EditorPanel) FlushPendingSave() {
 	if ep.saveTimer != nil {
 		ep.saveTimer.Stop()
 		ep.saveTimer = nil
+	}
+
+	savedRow, savedCol := 0, 0
+	if ep.proseEntry != nil {
+		savedRow, savedCol = ep.proseEntry.GetLockedCursor()
 	}
 
 	sc := *ep.activeScene
@@ -490,6 +499,10 @@ func (ep *EditorPanel) FlushPendingSave() {
 		ep.updateLiveWordCounts()
 		if ep.onSaved != nil {
 			ep.onSaved()
+		}
+		// Khôi phục lại tọa độ con trỏ đã khóa nếu bất kỳ lệnh Refresh nào làm trôi dòng đang chọn
+		if ep.proseEntry != nil {
+			ep.proseEntry.RestoreLockedCursor(savedRow, savedCol)
 		}
 	}
 }

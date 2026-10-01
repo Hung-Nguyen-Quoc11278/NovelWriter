@@ -52,7 +52,7 @@ func NewNovelistUI(app fyne.App, window fyne.Window, store *Store) (*NovelistUI,
 	}
 
 	ui.editorPanel = NewEditorPanel(store, window, ui.activeProject.ID, func() {
-		ui.RefreshTreeData()
+		ui.RefreshTreeStatsOnly()
 	})
 
 	ui.buildMainMenu()
@@ -323,8 +323,18 @@ func (ui *NovelistUI) ToggleDistractionFree() {
 	ui.mainSplit.Refresh()
 }
 
-// RefreshTreeData tải lại toàn bộ cấu trúc Hồi -> Chương -> Cảnh từ SQLite và tính tổng số từ.
+// RefreshTreeData tải lại toàn bộ cấu trúc Hồi -> Chương -> Cảnh từ SQLite và mở toàn bộ nhánh.
 func (ui *NovelistUI) RefreshTreeData() {
+	ui.refreshTreeInternal(true)
+}
+
+// RefreshTreeStatsOnly cập nhật số từ và tiêu đề trên cây thư mục trong lúc tự động lưu
+// mà KHÔNG gọi OpenAllBranches() để tránh làm gián đoạn tiêu điểm hoặc vị trí con trỏ của khung soạn thảo.
+func (ui *NovelistUI) RefreshTreeStatsOnly() {
+	ui.refreshTreeInternal(false)
+}
+
+func (ui *NovelistUI) refreshTreeInternal(openBranches bool) {
 	ui.childrenMap = make(map[string][]string)
 	ui.nodeMeta = make(map[string]HierarchyNode)
 
@@ -389,7 +399,9 @@ func (ui *NovelistUI) RefreshTreeData() {
 
 	if ui.tree != nil {
 		ui.tree.Refresh()
-		ui.tree.OpenAllBranches()
+		if openBranches {
+			ui.tree.OpenAllBranches()
+		}
 	}
 	if ui.statusFooter != nil {
 		ui.statusFooter.SetText(fmt.Sprintf("Tổng cộng: %d / %d từ", totalManuscriptWords, ui.activeProject.TargetWords))
