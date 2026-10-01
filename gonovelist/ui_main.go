@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -33,6 +34,7 @@ type NovelistUI struct {
 	sidebarBox      *fyne.Container
 	distractionFree bool
 	statusFooter    *widget.Label
+	fontTheme       *DynamicFontTheme
 }
 
 // NewNovelistUI khởi tạo toàn bộ giao diện người dùng tiếng Việt cho GoNovelist.
@@ -42,6 +44,11 @@ func NewNovelistUI(app fyne.App, window fyne.Window, store *Store) (*NovelistUI,
 		return nil, fmt.Errorf("không thể tải danh sách tác phẩm: %w", err)
 	}
 
+	// Nạp cỡ chữ ưa thích đã lưu từ Preferences (mặc định 18px chống mỏi mắt)
+	savedFontSize := float32(app.Preferences().FloatWithFallback(PrefKeyEditorFontSize, float64(DefaultEditorFontSize)))
+	fontTheme := NewDynamicFontTheme(savedFontSize)
+	app.Settings().SetTheme(fontTheme)
+
 	ui := &NovelistUI{
 		app:           app,
 		window:        window,
@@ -49,15 +56,22 @@ func NewNovelistUI(app fyne.App, window fyne.Window, store *Store) (*NovelistUI,
 		activeProject: projects[0],
 		childrenMap:   make(map[string][]string),
 		nodeMeta:      make(map[string]HierarchyNode),
+		fontTheme:     fontTheme,
 	}
 
 	ui.editorPanel = NewEditorPanel(store, window, ui.activeProject.ID, func() {
 		ui.RefreshTreeStatsOnly()
 	})
+	ui.editorPanel.BindZoomHandlers(
+		func(delta float32) { ui.AdjustFontSize(delta) },
+		func() { ui.ResetFontSize() },
+	)
+	ui.editorPanel.UpdateFontSizeIndicator(fontTheme.TextSize(), fontTheme.ZoomPercent())
 
 	ui.buildMainMenu()
 	content := ui.buildLayout(projects)
 	ui.window.SetContent(content)
+	ui.registerZoomShortcuts()
 
 	ui.RefreshTreeData()
 	ui.selectFirstAvailableScene()
@@ -116,6 +130,16 @@ func (ui *NovelistUI) buildMainMenu() {
 	viewMenu := fyne.NewMenu("Chế độ xem",
 		fyne.NewMenuItem("Bật/Tắt Chế độ Tập trung (Ẩn thanh bên)", func() {
 			ui.ToggleDistractionFree()
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Phóng to cỡ chữ (Ctrl + +)", func() {
+			ui.AdjustFontSize(EditorFontSizeStep)
+		}),
+		fyne.NewMenuItem("Thu nhỏ cỡ chữ (Ctrl + -)", func() {
+			ui.AdjustFontSize(-EditorFontSizeStep)
+		}),
+		fyne.NewMenuItem("Đặt lại cỡ chữ mặc định 18px (Ctrl + 0)", func() {
+			ui.ResetFontSize()
 		}),
 	)
 
@@ -321,6 +345,85 @@ func (ui *NovelistUI) ToggleDistractionFree() {
 		ui.mainSplit.Offset = 0.24
 	}
 	ui.mainSplit.Refresh()
+}
+
+// AdjustFontSize tăng hoặc giảm cỡ chữ động, lưu vào Preferences và làm mới bố cục ngay lập tức
+// mà không làm mất vị trí con trỏ đang soạn thảo.
+func (ui *NovelistUI) AdjustFontSize(delta float32) {
+	if ui.fontTheme == nil {
+		return
+	}
+	ui.ApplyFontSize(ui.fontTheme.TextSize() + delta)
+}
+
+// ResetFontSize đưa cỡ chữ về mức chuẩn dễ đọc (18px).
+func (ui *NovelistUI) ResetFontSize() {
+	ui.ApplyFontSize(DefaultEditorFontSize)
+}
+
+// ApplyFontSize áp dụng cỡ chữ mới cho toàn bộ trình soạn thảo và lưu trữ cục bộ.
+func (ui *NovelistUI) ApplyFontSize(targetSize float32) {
+	if ui.fontTheme == nil {
+		return
+	}
+
+	savedRow, savedCol := 0, 0
+	if ui.editorPanel != nil && ui.editorPanel.proseEntry != nil {
+		savedRow, savedCol = ui.editorPanel.proseEntry.GetLockedCursor()
+	}
+
+	newSize := ui.fontTheme.SetTextSize(targetSize)
+	ui.app.Preferences().SetFloat(PrefKeyEditorFontSize, float64(newSize))
+	ui.app.Settings().SetTheme(ui.fontTheme)
+
+	if ui.editorPanel != nil {
+		ui.editorPanel.UpdateFontSizeIndicator(newSize, ui.fontTheme.ZoomPercent())
+		if ui.editorPanel.proseEntry != nil {
+			ui.editorPanel.proseEntry.Refresh()
+			ui.editorPanel.proseEntry.RestoreLockedCursor(savedRow, savedCol)
+		}
+	}
+	if ui.window != nil && ui.window.Content() != nil {
+		ui.window.Content().Refresh()
+	}
+}
+
+// registerZoomShortcuts đăng ký các phím tắt Ctrl+=, Ctrl++, Ctrl+-, Ctrl+0 trên cửa sổ chính.
+func (ui *NovelistUI) registerZoomShortcuts() {
+	if ui.window == nil || ui.window.Canvas() == nil {
+		return
+	}
+	canvas := ui.window.Canvas()
+
+	// Ctrl + = và Ctrl + + để phóng to chữ
+	canvas.AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyEqual,
+		Modifier: fyne.KeyModifierControl,
+	}, func(_ fyne.Shortcut) {
+		ui.AdjustFontSize(EditorFontSizeStep)
+	})
+	canvas.AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyPlus,
+		Modifier: fyne.KeyModifierControl,
+	}, func(_ fyne.Shortcut) {
+		ui.AdjustFontSize(EditorFontSizeStep)
+	})
+
+	// Ctrl + - để thu nhỏ chữ
+	canvas.AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyMinus,
+		Modifier: fyne.KeyModifierControl,
+	}, func(_ fyne.Shortcut) {
+		ui.AdjustFontSize(-EditorFontSizeStep)
+	})
+
+	// Ctrl + 0 để đặt lại cỡ chữ mặc định (18px)
+	canvas.AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.Key0,
+		Modifier: fyne.KeyModifierControl,
+	}, func(_ fyne.Shortcut) {
+		ui.ResetFontSize()
+	})
 }
 
 // RefreshTreeData tải lại toàn bộ cấu trúc Hồi -> Chương -> Cảnh từ SQLite và mở toàn bộ nhánh.

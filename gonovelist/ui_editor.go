@@ -32,12 +32,15 @@ type EditorPanel struct {
 	proseEntry       *VietnameseEntry
 	targetWordsEntry *VietnameseEntry
 
-	// Thanh tiến độ và đếm từ thời gian thực
+	// Thanh tiến độ, đếm từ thời gian thực và điều khiển thu phóng cỡ chữ (Zoom)
 	sceneWordLabel   *widget.Label
 	chapterWordLabel *widget.Label
 	sceneProgress    *widget.ProgressBar
 	chapterProgress  *widget.ProgressBar
 	saveStateLabel   *widget.Label
+	fontSizeLabel    *widget.Label
+	onZoomDelta      func(delta float32)
+	onZoomReset      func()
 
 	// Bảng Ngữ cảnh Cảnh bên phải (Trạng thái, POV, Địa điểm, Nhân vật, Vật phẩm, Sự kiện, Ghi chú)
 	statusSelect    *widget.Select
@@ -99,6 +102,36 @@ func (ep *EditorPanel) buildUI() {
 	ep.sceneWordLabel = widget.NewLabel("Cảnh: 0 / 1200 từ")
 	ep.chapterWordLabel = widget.NewLabel("Chương: 0 / 3000 từ")
 	ep.saveStateLabel = widget.NewLabel("Đã lưu")
+	ep.fontSizeLabel = widget.NewLabelWithStyle("Cỡ chữ: 18px (129%)", fyne.TextAlignCenter, fyne.TextStyle{Monospace: true})
+
+	zoomOutBtn := widget.NewButton("A-", func() {
+		if ep.onZoomDelta != nil {
+			ep.onZoomDelta(-EditorFontSizeStep)
+		}
+	})
+	zoomOutBtn.Importance = widget.LowImportance
+
+	zoomInBtn := widget.NewButton("A+", func() {
+		if ep.onZoomDelta != nil {
+			ep.onZoomDelta(EditorFontSizeStep)
+		}
+	})
+	zoomInBtn.Importance = widget.LowImportance
+
+	zoomResetBtn := widget.NewButton("Mặc định", func() {
+		if ep.onZoomReset != nil {
+			ep.onZoomReset()
+		}
+	})
+	zoomResetBtn.Importance = widget.LowImportance
+
+	zoomControlsBox := container.NewHBox(
+		widget.NewSeparator(),
+		zoomOutBtn,
+		ep.fontSizeLabel,
+		zoomInBtn,
+		zoomResetBtn,
+	)
 
 	ep.sceneProgress = widget.NewProgressBar()
 	ep.chapterProgress = widget.NewProgressBar()
@@ -134,12 +167,12 @@ func (ep *EditorPanel) buildUI() {
 		ep.scheduleAutoSave()
 	})
 
-	// Bố cục khu vực soạn thảo trung tâm
+	// Bố cục khu vực soạn thảo trung tâm kèm thanh công cụ thu phóng cỡ chữ (Zoom)
 	headerForm := container.NewVBox(
 		container.NewBorder(
 			nil, nil,
 			widget.NewLabelWithStyle("Cảnh:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			container.NewHBox(widget.NewLabel("Mục tiêu từ:"), ep.targetWordsEntry),
+			container.NewHBox(widget.NewLabel("Mục tiêu từ:"), ep.targetWordsEntry, zoomControlsBox),
 			ep.titleEntry,
 		),
 		ep.summaryEntry,
@@ -211,6 +244,19 @@ func (ep *EditorPanel) buildUI() {
 // Container trả về đối tượng CanvasObject gốc của khung soạn thảo.
 func (ep *EditorPanel) Container() fyne.CanvasObject {
 	return ep.splitContainer
+}
+
+// BindZoomHandlers kết nối các nút phóng to / thu nhỏ cỡ chữ trên thanh công cụ với bộ quản lý Theme.
+func (ep *EditorPanel) BindZoomHandlers(onDelta func(delta float32), onReset func()) {
+	ep.onZoomDelta = onDelta
+	ep.onZoomReset = onReset
+}
+
+// UpdateFontSizeIndicator cập nhật nhãn hiển thị cỡ chữ hiện tại (px & %).
+func (ep *EditorPanel) UpdateFontSizeIndicator(sizePx float32, zoomPercent int) {
+	if ep.fontSizeLabel != nil {
+		ep.fontSizeLabel.SetText(fmt.Sprintf("Cỡ chữ: %.0fpx (%d%%)", sizePx, zoomPercent))
+	}
 }
 
 // SetDistractionFree ẩn hoặc hiện thanh Ngữ cảnh Cảnh & Ghi chú bên phải.
