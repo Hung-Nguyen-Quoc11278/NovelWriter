@@ -1155,7 +1155,9 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 		projectNames[i] = p.Title
 	}
 
-	ui.projectSelect = widget.NewSelect(projectNames, func(selected string) {
+	ui.projectSelect = widget.NewSelect(projectNames, nil)
+	ui.projectSelect.SetSelected(ui.activeProject.Title)
+	ui.projectSelect.OnChanged = func(selected string) {
 		all, _ := ui.store.ListProjects()
 		for _, p := range all {
 			if p.Title == selected {
@@ -1165,8 +1167,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 				break
 			}
 		}
-	})
-	ui.projectSelect.SetSelected(ui.activeProject.Title)
+	}
 
 	newProjBtn := widget.NewButtonWithIcon("New Book", theme.FolderNewIcon(), ui.showNewProjectDialog)
 	castBtn := widget.NewButtonWithIcon("Cast & Locations", theme.AccountIcon(), ui.showWorldbuildingDialog)
@@ -1337,9 +1338,13 @@ func (ui *NovelistUI) RefreshTreeData() {
 		totalManuscriptWords += actWords
 	}
 
-	ui.tree.Refresh()
-	ui.tree.OpenAllBranches()
-	ui.statusFooter.SetText(fmt.Sprintf("Total: %d / %d words", totalManuscriptWords, ui.activeProject.TargetWords))
+	if ui.tree != nil {
+		ui.tree.Refresh()
+		ui.tree.OpenAllBranches()
+	}
+	if ui.statusFooter != nil {
+		ui.statusFooter.SetText(fmt.Sprintf("Total: %d / %d words", totalManuscriptWords, ui.activeProject.TargetWords))
+	}
 }
 
 func (ui *NovelistUI) selectFirstAvailableScene() {
