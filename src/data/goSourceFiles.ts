@@ -1194,10 +1194,10 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 
 	// Hierarchical widget.Tree for Act -> Chapter -> Scene
 	ui.tree = widget.NewTree(
-		func(uid widget.TreeNodeUID) []widget.TreeNodeUID {
+		func(uid widget.TreeNodeID) []widget.TreeNodeID {
 			return ui.childrenMap[uid]
 		},
-		func(uid widget.TreeNodeUID) bool {
+		func(uid widget.TreeNodeID) bool {
 			if uid == "" {
 				return true
 			}
@@ -1213,7 +1213,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 			meta.TextStyle = fyne.TextStyle{Monospace: true}
 			return container.NewBorder(nil, nil, nil, meta, title)
 		},
-		func(uid widget.TreeNodeUID, branch bool, obj fyne.CanvasObject) {
+		func(uid widget.TreeNodeID, branch bool, obj fyne.CanvasObject) {
 			c := obj.(*fyne.Container)
 			titleLbl := c.Objects[0].(*widget.Label)
 			metaLbl := c.Objects[1].(*widget.Label)
@@ -1222,7 +1222,6 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 			if !ok {
 				return
 			}
-			titleLbl.SetText(node.Title)
 			switch node.Kind {
 			case NodeAct:
 				titleLbl.TextStyle = fyne.TextStyle{Bold: true}
@@ -1234,10 +1233,12 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 				titleLbl.TextStyle = fyne.TextStyle{}
 				metaLbl.SetText(fmt.Sprintf("[%s] %dw", node.Status, node.WordCount))
 			}
+			titleLbl.SetText(node.Title)
+			titleLbl.Refresh()
 		},
 	)
 
-	ui.tree.OnSelected = func(uid widget.TreeNodeUID) {
+	ui.tree.OnSelected = func(uid widget.TreeNodeID) {
 		ui.selectedUID = uid
 		node, ok := ui.nodeLookup[uid]
 		if !ok {
@@ -2012,13 +2013,11 @@ func (ep *EditorPanel) FlushPendingSave() {
 	}
 
 	if err := ep.store.UpdateScene(sc); err == nil {
-		fyne.Do(func() {
-			ep.saveStateLabel.SetText(fmt.Sprintf("Auto-saved %s", time.Now().Format("15:04:05")))
-			ep.updateLiveWordCounts()
-			if ep.onSaved != nil {
-				ep.onSaved()
-			}
-		})
+		ep.saveStateLabel.SetText(fmt.Sprintf("Auto-saved %s", time.Now().Format("15:04:05")))
+		ep.updateLiveWordCounts()
+		if ep.onSaved != nil {
+			ep.onSaved()
+		}
 	}
 }
 

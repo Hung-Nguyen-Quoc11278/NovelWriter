@@ -352,13 +352,11 @@ func (ep *EditorPanel) FlushPendingSave() {
 	}
 
 	if err := ep.store.UpdateScene(sc); err == nil {
-		fyne.Do(func() {
-			ep.saveStateLabel.SetText(fmt.Sprintf("Auto-saved %s", time.Now().Format("15:04:05")))
-			ep.updateLiveWordCounts()
-			if ep.onSaved != nil {
-				ep.onSaved()
-			}
-		})
+		ep.saveStateLabel.SetText(fmt.Sprintf("Auto-saved %s", time.Now().Format("15:04:05")))
+		ep.updateLiveWordCounts()
+		if ep.onSaved != nil {
+			ep.onSaved()
+		}
 	}
 }
 
