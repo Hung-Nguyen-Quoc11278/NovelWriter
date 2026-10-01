@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // SceneStatus biểu thị trạng thái biên tập của một Cảnh (Scene).
@@ -183,15 +184,20 @@ func ParseNodeUID(uid string) (string, int64, error) {
 	return parts[0], id, nil
 }
 
-// CountWords đếm số từ chuẩn xác cho văn bản tiếng Việt (Unicode) và tiếng Anh.
+// CountWords đếm số từ chuẩn xác cho văn bản tiếng Việt (UTF-8 đa byte) bằng gói unicode/utf8.
 func CountWords(text string) int {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
+	if trimmed == "" || utf8.RuneCountInString(trimmed) == 0 {
 		return 0
 	}
 	count := 0
 	inWord := false
-	for _, r := range trimmed {
+	for len(trimmed) > 0 {
+		r, width := utf8.DecodeRuneInString(trimmed)
+		trimmed = trimmed[width:]
+		if r == utf8.RuneError && width == 1 {
+			continue
+		}
 		if unicode.IsSpace(r) {
 			inWord = false
 		} else if !inWord {

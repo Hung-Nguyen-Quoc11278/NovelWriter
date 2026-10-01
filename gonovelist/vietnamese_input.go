@@ -7,20 +7,20 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 )
 
-// GlobalTelexEnabled bật/tắt bộ xử lý gõ Tiếng Việt (Telex / VNI / Chặn Dead-Key Fcitx5 Wayland).
-var GlobalTelexEnabled = true
-
-// GlobalVNIModeEnabled cho phép gõ cả kiểu VNI (1-9) lẫn chặn Dead-Key (' ^ ~ `) bị rò rỉ từ Fcitx5 trên Wayland.
-var GlobalVNIModeEnabled = true
+// GlobalTelexEnabled mặc định TẮT (false) để nhường quyền hoàn toàn cho bộ gõ hệ thống (Fcitx5 / IBus / Unikey),
+// tránh xung đột 2 bộ gõ cùng lúc gây lỗi biến dạng chữ ("lại phải" -> "lẫi phi", "phaỉ").
+// Người dùng chỉ bật tùy chọn này trên thanh công cụ nếu máy hoàn toàn không có Fcitx5/IBus.
+var GlobalTelexEnabled = false
 
 // ConfigureVietnameseFont tự động cấu hình biến môi trường IME cho Linux/Wayland (Fcitx5)
-// và thiết lập phông chữ hệ thống hỗ trợ đầy đủ Unicode Tiếng Việt trước khi khởi tạo Fyne.
+// và thiết lập phông chữ hệ thống hỗ trợ đầy đủ Unicode Tiếng Việt UTF-8 trước khi khởi tạo Fyne.
 func ConfigureVietnameseFont() {
 	if runtime.GOOS == "linux" {
 		if os.Getenv("XMODIFIERS") == "" {
@@ -47,7 +47,6 @@ func ConfigureVietnameseFont() {
 		return
 	}
 	candidateFonts := []string{
-		// Arch Linux / Ubuntu / Fedora / Debian
 		"/usr/share/fonts/TTF/DejaVuSans.ttf",
 		"/usr/share/fonts/noto/NotoSans-Regular.ttf",
 		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -55,11 +54,9 @@ func ConfigureVietnameseFont() {
 		"/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
 		"/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 		"/usr/share/fonts/gnu-free/FreeSans.ttf",
-		// macOS
 		"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 		"/System/Library/Fonts/Supplemental/Arial.ttf",
 		"/Library/Fonts/Arial.ttf",
-		// Windows
 		`C:\Windows\Fonts\segoeui.ttf`,
 		`C:\Windows\Fonts\arial.ttf`,
 		`C:\Windows\Fonts\tahoma.ttf`,
@@ -73,39 +70,83 @@ func ConfigureVietnameseFont() {
 	}
 }
 
-// VietnameseEntry là custom widget kế thừa widget.Entry của Fyne v2, khắc phục triệt để lỗi
-// con trỏ (caret) bị nhảy ngược lên cuối dòng trên (ví dụ nhảy về sau chữ "gặp" ở dòng 1)
-// khi người dùng nhấp chuột xuống dòng mới (dòng 2) và gõ 2-3 ký tự Tiếng Việt:
-//
-// Nguyên nhân gốc rễ trong Fyne v2:
-//  1. Khi bật Wrapping = fyne.TextWrapWord, CursorRow và CursorColumn của Fyne là tọa độ DÒNG HIỂN THỊ
-//     (visual wrapped row), KHÔNG phải số lượng ký tự xuống dòng '\n'. Mọi hàm tự tính (row, col)
-//     bằng cách đếm '\n' hoặc strings.Split(text, "\n") rồi gán vào CursorRow sẽ làm con trỏ nhảy
-//     ngược về cuối dòng hiển thị phía trên ngay khi gõ đến ký tự thứ 2-3 (lúc Telex kích hoạt).
-//  2. Việc gọi Entry.SetText() bên trong OnChanged hoặc TypedRune làm Fyne tính toán lại toàn bộ
-//     RichText rowBounds và ghi đè lại vị trí con trỏ cũ.
-//
-// Giải pháp kiến trúc trong VietnameseEntry:
-//  - Lưu trữ bộ đệm từ đang gõ tại con trỏ (wordBuf []rune) độc lập với tọa độ '\n', xóa sạch wordBuf
-//    ngay khi người dùng nhấp chuột (MouseDown, MouseUp, Tapped) để tách biệt hoàn toàn với dòng cũ.
-//  - Tuyệt đối KHÔNG gọi SetText() khi đang gõ; chỉ thay thế phần hậu tố thay đổi của từ hiện tại bằng
-//    sự kiện gốc của Fyne (Entry.TypedKey(KeyBackspace) + Entry.TypedRune) ngay tại con trỏ thực tế.
-//  - Khóa cứng tọa độ dòng do người dùng chọn (lockedRow, lockedCol, mouseFloorRow) để ngăn chặn
-//    mọi hiện tượng nhảy lùi dòng do WordWrap hoặc xung Backspace từ Fcitx5/Wayland.
-type VietnameseEntry struct {
-	widget.Entry
-	mu              sync.Mutex
-	wordBuf         []rune
-	lockedRow       int
-	lockedCol       int
-	mouseFloorRow   int
-	hasLockedCursor bool
-	composing       bool
-	lastTypedAt     time.Time
-	userOnChanged   func(string)
+// DecodeUTF8Runes giải mã chuỗi UTF-8 thành mảng rune chuẩn xác thông qua gói unicode/utf8.
+// Tuyệt đối không dùng len(str) hay cắt chuỗi theo byte index để tránh làm hỏng ký tự Tiếng Việt đa byte (2-4 bytes).
+func DecodeUTF8Runes(s string) []rune {
+	if s == "" {
+		return nil
+	}
+	runeCount := utf8.RuneCountInString(s)
+	runes := make([]rune, 0, runeCount)
+	for len(s) > 0 {
+		r, width := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError && width == 1 {
+			s = s[1:]
+			continue
+		}
+		runes = append(runes, r)
+		s = s[width:]
+	}
+	return runes
 }
 
-// NewVietnameseEntry khởi tạo ô nhập văn bản 1 dòng với cơ chế khóa con trỏ & hỗ trợ Tiếng Việt.
+// UTF8RuneLength trả về số lượng ký tự Unicode (rune) thực sự thay vì số byte của chuỗi.
+func UTF8RuneLength(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// NormalizeCombiningMarksNFC hợp nhất các dấu tổ hợp Unicode NFD (U+0300..U+036F) bị rò rỉ
+// từ luồng Fcitx5 IME vào đúng nguyên âm đứng ngay trước nó theo chuẩn Unicode dựng sẵn (NFC).
+func NormalizeCombiningMarksNFC(s string) (string, bool) {
+	if s == "" {
+		return s, false
+	}
+	var out []rune
+	changed := false
+	rest := s
+	for len(rest) > 0 {
+		r, width := utf8.DecodeRuneInString(rest)
+		rest = rest[width:]
+
+		if act, isCombining := mapCombiningDiacritic(r); isCombining {
+			if len(out) > 0 {
+				lastRune := out[len(out)-1]
+				if composedRune, ok := applyCombiningToSingleRune(lastRune, act); ok {
+					out[len(out)-1] = composedRune
+					changed = true
+					continue
+				}
+			}
+			// Nếu dấu tổ hợp bị rò rỉ mà không có nguyên âm hợp lệ đứng trước, loại bỏ để tránh hỏng chuỗi
+			changed = true
+			continue
+		}
+		out = append(out, r)
+	}
+	if !changed {
+		return s, false
+	}
+	return string(out), true
+}
+
+// VietnameseEntry kế thừa widget.Entry của Fyne v2, đảm bảo 2 mục tiêu cốt lõi:
+//  1. Bảo toàn tuyệt đối luồng UTF-8 đa byte từ Fcitx5/IBus: không can thiệp sửa đổi văn bản chồng lấn
+//     lên bộ đệm Preedit/Commit của Fcitx5, sử dụng unicode/utf8 cho mọi tính toán độ dài và vị trí.
+//  2. Khóa cứng dòng con trỏ (lockedRow, lockedCol) khi nhấp chuột xuống dòng mới (MouseDown/MouseUp/Tapped)
+//     và khi Auto-Save chạy ngầm, ngăn con trỏ nhảy ngược về cuối dòng trên.
+type VietnameseEntry struct {
+	widget.Entry
+	mu                sync.Mutex
+	lockedRow         int
+	lockedCol         int
+	hasLockedCursor   bool
+	composingInternal bool
+	systemIMEDetected bool
+	lastTypedAt       time.Time
+	userOnChanged     func(string)
+}
+
+// NewVietnameseEntry khởi tạo ô nhập văn bản 1 dòng chuẩn UTF-8.
 func NewVietnameseEntry() *VietnameseEntry {
 	e := &VietnameseEntry{}
 	e.ExtendBaseWidget(e)
@@ -113,7 +154,7 @@ func NewVietnameseEntry() *VietnameseEntry {
 	return e
 }
 
-// NewVietnameseMultiLineEntry khởi tạo khung soạn thảo nhiều dòng chống nhảy con trỏ khi nhấp chuột xuống dòng.
+// NewVietnameseMultiLineEntry khởi tạo khung soạn thảo nhiều dòng chuẩn UTF-8, chống nhảy con trỏ.
 func NewVietnameseMultiLineEntry() *VietnameseEntry {
 	e := &VietnameseEntry{}
 	e.MultiLine = true
@@ -133,7 +174,7 @@ func NewVietMultiLineEntry() *VietnameseEntry {
 	return NewVietnameseMultiLineEntry()
 }
 
-// SetEntryOnChanged đăng ký callback lắng nghe thay đổi văn bản mà không phá vỡ bộ khóa con trỏ.
+// SetEntryOnChanged đăng ký callback OnChanged an toàn cho VietnameseEntry.
 func SetEntryOnChanged(entry *VietnameseEntry, onChanged func(string)) {
 	if entry == nil {
 		return
@@ -152,20 +193,20 @@ func AttachVietnameseTelex(entry *VietnameseEntry, onChanged func(string)) {
 func (e *VietnameseEntry) installInternalOnChanged() {
 	e.Entry.OnChanged = func(text string) {
 		e.mu.Lock()
-		suppress := e.composing
+		if e.composingInternal {
+			e.mu.Unlock()
+			return
+		}
 		cb := e.userOnChanged
 		e.mu.Unlock()
 
-		if suppress {
-			return
-		}
 		if cb != nil {
 			cb(text)
 		}
 	}
 }
 
-// SetOnChangedCallback thiết lập hàm callback chỉ được gọi sau khi chu kỳ ghép chữ Tiếng Việt hoàn tất.
+// SetOnChangedCallback thiết lập hàm lắng nghe thay đổi văn bản.
 func (e *VietnameseEntry) SetOnChangedCallback(cb func(string)) {
 	e.mu.Lock()
 	e.userOnChanged = cb
@@ -173,18 +214,7 @@ func (e *VietnameseEntry) SetOnChangedCallback(cb func(string)) {
 	e.installInternalOnChanged()
 }
 
-func (e *VietnameseEntry) fireUserOnChanged() {
-	e.mu.Lock()
-	cb := e.userOnChanged
-	currentText := e.Entry.Text
-	e.mu.Unlock()
-
-	if cb != nil {
-		cb(currentText)
-	}
-}
-
-// IsActivelyTyping kiểm tra xem người dùng có vừa gõ phím hoặc nhấp chuột trong khoảng windowDuration hay không.
+// IsActivelyTyping kiểm tra xem người dùng có đang gõ phím/nhấp chuột trong khoảng windowDuration hay không.
 func (e *VietnameseEntry) IsActivelyTyping(windowDuration time.Duration) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -194,7 +224,7 @@ func (e *VietnameseEntry) IsActivelyTyping(windowDuration time.Duration) bool {
 	return time.Since(e.lastTypedAt) < windowDuration
 }
 
-// GetLockedCursor trả về tọa độ (CursorRow, CursorColumn) đang được khóa bởi người dùng.
+// GetLockedCursor trả về tọa độ (CursorRow, CursorColumn) hiện tại của người dùng.
 func (e *VietnameseEntry) GetLockedCursor() (int, int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -204,7 +234,7 @@ func (e *VietnameseEntry) GetLockedCursor() (int, int) {
 	return e.Entry.CursorRow, e.Entry.CursorColumn
 }
 
-// RestoreLockedCursor khôi phục lại đúng tọa độ con trỏ nếu một tác vụ nền (như Auto-Save / Refresh) làm trôi con trỏ.
+// RestoreLockedCursor khôi phục lại tọa độ con trỏ nếu một tác vụ nền (như Auto-Save) làm trôi con trỏ.
 func (e *VietnameseEntry) RestoreLockedCursor(row, col int) {
 	e.mu.Lock()
 	if e.Entry.CursorRow != row || e.Entry.CursorColumn != col {
@@ -217,50 +247,47 @@ func (e *VietnameseEntry) RestoreLockedCursor(row, col int) {
 	e.mu.Unlock()
 }
 
-// SetText ghi đè widget.Entry.SetText khi nạp Cảnh mới từ SQLite, đồng thời xóa sạch bộ đệm từ cũ.
+// SetText ghi đè widget.Entry.SetText và đồng bộ tọa độ con trỏ theo số lượng rune UTF-8.
 func (e *VietnameseEntry) SetText(text string) {
+	cleanText, _ := NormalizeCombiningMarksNFC(text)
+
 	e.mu.Lock()
-	e.composing = true
-	e.wordBuf = e.wordBuf[:0]
+	e.composingInternal = true
 	e.mu.Unlock()
 
-	e.Entry.SetText(text)
+	e.Entry.SetText(cleanText)
 
 	e.mu.Lock()
 	e.lockedRow = e.Entry.CursorRow
 	e.lockedCol = e.Entry.CursorColumn
-	e.mouseFloorRow = e.Entry.CursorRow
 	e.hasLockedCursor = true
-	e.composing = false
+	e.composingInternal = false
 	e.mu.Unlock()
 }
 
-// syncCursorFromUserClick khóa chặt vị trí dòng và cột ngay tại nơi người dùng nhấp chuột
-// và xóa bộ đệm từ của dòng cũ (ngăn tuyệt đối việc nhảy ngược về từ cuối của dòng trên).
+// syncCursorFromUserClick ghi nhận chính xác dòng và cột mà người dùng vừa nhấp chuột chọn.
 func (e *VietnameseEntry) syncCursorFromUserClick() {
 	e.mu.Lock()
-	e.wordBuf = e.wordBuf[:0]
 	e.lockedRow = e.Entry.CursorRow
 	e.lockedCol = e.Entry.CursorColumn
-	e.mouseFloorRow = e.Entry.CursorRow
 	e.hasLockedCursor = true
 	e.lastTypedAt = time.Now()
 	e.mu.Unlock()
 }
 
-// MouseDown bắt sự kiện nhấn chuột xuống, để Fyne định vị dòng mới rồi khóa tọa độ ngay lập tức.
+// MouseDown bắt sự kiện nhấn chuột xuống và khóa tọa độ dòng mới.
 func (e *VietnameseEntry) MouseDown(ev *desktop.MouseEvent) {
 	e.Entry.MouseDown(ev)
 	e.syncCursorFromUserClick()
 }
 
-// MouseUp bắt sự kiện nhả chuột (quan trọng trong Fyne v2 vì Entry.MouseUp có thể cập nhật lại CursorRow/CursorColumn).
+// MouseUp bắt sự kiện nhả chuột để đồng bộ chính xác CursorRow/CursorColumn sau khi nhấp chuột.
 func (e *VietnameseEntry) MouseUp(ev *desktop.MouseEvent) {
 	e.Entry.MouseUp(ev)
 	e.syncCursorFromUserClick()
 }
 
-// Tapped bắt sự kiện chạm/nhấp chuột hoàn chỉnh để đảm bảo tọa độ dòng mới luôn được khóa cứng.
+// Tapped bắt sự kiện nhấp chuột hoàn chỉnh.
 func (e *VietnameseEntry) Tapped(ev *fyne.PointEvent) {
 	e.Entry.Tapped(ev)
 	e.syncCursorFromUserClick()
@@ -272,13 +299,13 @@ func (e *VietnameseEntry) TappedSecondary(ev *fyne.PointEvent) {
 	e.syncCursorFromUserClick()
 }
 
-// DragEnd đồng bộ vị trí con trỏ sau khi người dùng kéo chuột bôi đen văn bản.
+// DragEnd đồng bộ vị trí con trỏ sau khi kéo chuột chọn vùng văn bản.
 func (e *VietnameseEntry) DragEnd() {
 	e.Entry.DragEnd()
 	e.syncCursorFromUserClick()
 }
 
-// FocusGained giữ nguyên vị trí con trỏ đã khóa khi khung soạn thảo nhận lại tiêu điểm (focus).
+// FocusGained bảo vệ vị trí con trỏ đã chọn khi khung soạn thảo nhận lại tiêu điểm.
 func (e *VietnameseEntry) FocusGained() {
 	e.mu.Lock()
 	hadLock := e.hasLockedCursor
@@ -298,142 +325,93 @@ func (e *VietnameseEntry) FocusGained() {
 	}
 }
 
-// enforceLockedCursorBeforeTyping kiểm tra trước mỗi phím gõ: nếu Fyne hoặc bộ gõ hệ thống tự ý
-// làm tụt CursorRow về dòng phía trên so với dòng người dùng đã nhấp chuột, khôi phục ngay lập tức.
-func (e *VietnameseEntry) enforceLockedCursorBeforeTypingLocked() {
-	if !e.hasLockedCursor {
-		e.lockedRow = e.Entry.CursorRow
-		e.lockedCol = e.Entry.CursorColumn
-		e.hasLockedCursor = true
-		return
-	}
-	if e.Entry.CursorRow < e.lockedRow ||
-		(e.Entry.CursorRow == 0 && e.Entry.CursorColumn == 0 && (e.lockedRow > 0 || e.lockedCol > 0)) {
-		e.Entry.CursorRow = e.lockedRow
-		e.Entry.CursorColumn = e.lockedCol
-	}
-}
-
-// TypedKey xử lý các phím điều hướng, Enter và Backspace mà KHÔNG bao giờ gọi SetText().
+// TypedKey chuyển tiếp nguyên vẹn sự kiện phím cho Fyne (bao gồm cả xung Backspace của Fcitx5),
+// chỉ khóa tọa độ dòng để không bị nhảy về (0, 0) khi chuyển dòng.
 func (e *VietnameseEntry) TypedKey(ev *fyne.KeyEvent) {
 	if e.Disabled() {
 		return
 	}
 
 	e.mu.Lock()
-	now := time.Now()
-	timeSinceLastRune := now.Sub(e.lastTypedAt)
-	e.lastTypedAt = now
-
-	switch ev.Name {
-	case fyne.KeyBackspace:
-		// Khôi phục con trỏ nếu bị trôi trước khi xóa
-		e.enforceLockedCursorBeforeTypingLocked()
-
-		// Chặn xung Backspace giả mạo từ Fcitx5/IBus (gửi kèm trong vòng < 35ms khi đang gõ)
-		// cố tình xóa ký tự xuống dòng khi con trỏ đang ở đầu dòng mới (CursorColumn == 0).
-		if e.Entry.SelectedText() == "" &&
-			e.Entry.CursorColumn == 0 &&
-			e.Entry.CursorRow <= e.mouseFloorRow &&
-			len(e.wordBuf) == 0 &&
-			timeSinceLastRune < 35*time.Millisecond {
-			e.mu.Unlock()
-			return
-		}
-
-		if e.Entry.SelectedText() != "" {
-			e.wordBuf = e.wordBuf[:0]
-		} else if len(e.wordBuf) > 0 {
-			e.wordBuf = e.wordBuf[:len(e.wordBuf)-1]
-		}
-		e.mu.Unlock()
-
-		e.Entry.TypedKey(ev)
-
-		e.mu.Lock()
-		e.lockedRow = e.Entry.CursorRow
-		e.lockedCol = e.Entry.CursorColumn
-		if e.Entry.CursorRow < e.mouseFloorRow {
-			e.mouseFloorRow = e.Entry.CursorRow
-		}
-		e.hasLockedCursor = true
-		e.mu.Unlock()
-		return
-
-	case fyne.KeyReturn, fyne.KeyEnter:
-		e.enforceLockedCursorBeforeTypingLocked()
-		prevRow := e.Entry.CursorRow
-		e.wordBuf = e.wordBuf[:0]
-		e.mu.Unlock()
-
-		// Sử dụng xử lý xuống dòng nguyên bản của Fyne để giữ tương thích 100% với TextWrapWord
-		e.Entry.TypedKey(ev)
-
-		e.mu.Lock()
-		if e.MultiLine && e.Entry.CursorRow <= prevRow {
-			e.Entry.CursorRow = prevRow + 1
-			e.Entry.CursorColumn = 0
-		}
-		e.lockedRow = e.Entry.CursorRow
-		e.lockedCol = e.Entry.CursorColumn
-		e.mouseFloorRow = e.Entry.CursorRow
-		e.hasLockedCursor = true
-		e.mu.Unlock()
-		return
-
-	case fyne.KeyUp, fyne.KeyDown, fyne.KeyLeft, fyne.KeyRight,
-		fyne.KeyHome, fyne.KeyEnd, fyne.KeyPageUp, fyne.KeyPageDown, fyne.KeyDelete:
-		e.wordBuf = e.wordBuf[:0]
-		e.mu.Unlock()
-
-		e.Entry.TypedKey(ev)
-
-		e.mu.Lock()
-		e.lockedRow = e.Entry.CursorRow
-		e.lockedCol = e.Entry.CursorColumn
-		e.mouseFloorRow = e.Entry.CursorRow
-		e.hasLockedCursor = true
-		e.mu.Unlock()
-		return
-	}
-
+	e.lastTypedAt = time.Now()
+	prevRow := e.Entry.CursorRow
 	e.mu.Unlock()
+
 	e.Entry.TypedKey(ev)
 
 	e.mu.Lock()
+	if (ev.Name == fyne.KeyReturn || ev.Name == fyne.KeyEnter) && e.MultiLine {
+		if e.Entry.CursorRow <= prevRow {
+			e.Entry.CursorRow = prevRow + 1
+			e.Entry.CursorColumn = 0
+		}
+	}
 	e.lockedRow = e.Entry.CursorRow
 	e.lockedCol = e.Entry.CursorColumn
 	e.hasLockedCursor = true
 	e.mu.Unlock()
 }
 
-// TypedRune xử lý từng ký tự được gõ vào ngay tại vị trí con trỏ hiện hành,
-// ghép dấu Tiếng Việt tại chỗ (in-place suffix replacement) và khóa chặt dòng đang chọn.
+// TypedRune xử lý ký tự Unicode chuẩn UTF-8 từ Fcitx5/IBus hoặc bàn phím:
+//  1. Nếu Fcitx5 gửi dấu tổ hợp rời (Combining Diacritical Marks U+0300..U+036F), hợp nhất thành
+//     rune NFC hoàn chỉnh với nguyên âm liền trước mà không làm lệch byte offset.
+//  2. Nếu Fcitx5 gửi ký tự Tiếng Việt đã dựng sẵn (r > 127 như 'ạ', 'ả', 'ể'...), tự động nhận diện
+//     System IME đang hoạt động và chèn trực tiếp 1 rune nguyên vẹn vào Fyne.
+//  3. Bảo vệ dòng hiện hành (rowBefore) để con trỏ không bao giờ nhảy ngược lên dòng trên.
 func (e *VietnameseEntry) TypedRune(r rune) {
 	if e.Disabled() {
 		return
 	}
-
-	// Nếu đang bôi đen văn bản, xóa vùng chọn trước
-	if e.Entry.SelectedText() != "" {
-		e.mu.Lock()
-		e.wordBuf = e.wordBuf[:0]
-		e.mu.Unlock()
-		e.Entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyBackspace})
+	if !utf8.ValidRune(r) {
+		return
 	}
 
 	e.mu.Lock()
 	e.lastTypedAt = time.Now()
-	e.enforceLockedCursorBeforeTypingLocked()
 
-	// 1. Kiểm tra nếu r là dấu tổ hợp Unicode NFD (Combining Diacritical Marks U+0300..U+036F)
+	// Nếu Fyne bất ngờ làm mất tọa độ dòng (về 0,0) sau khi người dùng đã nhấp chuột ở dòng dưới,
+	// khôi phục ngay tọa độ đã khóa trước khi chèn ký tự.
+	if e.hasLockedCursor && e.Entry.CursorRow == 0 && e.Entry.CursorColumn == 0 && (e.lockedRow > 0 || e.lockedCol > 0) {
+		e.Entry.CursorRow = e.lockedRow
+		e.Entry.CursorColumn = e.lockedCol
+	}
+
+	// Nếu nhận được ký tự Unicode Tiếng Việt dựng sẵn (r > 127) từ Fcitx5/IBus,
+	// đánh dấu hệ thống đã có IME để không chạy bộ gõ Telex nội bộ chồng lên Fcitx5.
+	if r > 127 && !isCombiningMarkRune(r) {
+		e.systemIMEDetected = true
+	}
+
+	// 1. Trường hợp luồng Fcitx5 gửi dấu tổ hợp Unicode NFD rời (U+0300..U+036F):
 	if combAct, isCombining := mapCombiningDiacritic(r); isCombining {
-		if len(e.wordBuf) > 0 {
-			if composedWord, ok := applyActionToStem(e.wordBuf, combAct, r); ok {
-				e.replaceWordSuffixInPlaceLocked(composedWord)
+		lastRune, hasLast := e.decodeRuneBeforeCaretLocked()
+		if hasLast {
+			if composedRune, ok := applyCombiningToSingleRune(lastRune, combAct); ok {
+				rowBefore := e.Entry.CursorRow
+				colBefore := e.Entry.CursorColumn
+				e.composingInternal = true
 				e.mu.Unlock()
+
+				e.Entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyBackspace})
+				e.Entry.TypedRune(composedRune)
+
+				e.mu.Lock()
+				e.composingInternal = false
+				if e.Entry.CursorRow < rowBefore {
+					e.Entry.CursorRow = rowBefore
+					e.Entry.CursorColumn = colBefore
+				}
+				e.lockedRow = e.Entry.CursorRow
+				e.lockedCol = e.Entry.CursorColumn
+				e.hasLockedCursor = true
+				cb := e.userOnChanged
+				currentText := e.Entry.Text
+				e.mu.Unlock()
+
 				e.Entry.Refresh()
-				e.fireUserOnChanged()
+				if cb != nil {
+					cb(currentText)
+				}
 				return
 			}
 		}
@@ -441,98 +419,121 @@ func (e *VietnameseEntry) TypedRune(r rune) {
 		return
 	}
 
-	// 2. Xử lý ghép chữ Tiếng Việt (Telex / VNI / Dead-Key) trên bộ đệm từ hiện tại (e.wordBuf)
-	if GlobalTelexEnabled && len(e.wordBuf) > 0 && len(e.wordBuf) <= 15 {
-		if composedWord, changed := tryComposeOnWordBuf(e.wordBuf, r); changed {
-			e.replaceWordSuffixInPlaceLocked(composedWord)
-			e.mu.Unlock()
-			e.Entry.Refresh()
-			e.fireUserOnChanged()
-			return
+	// 2. Chỉ chạy bộ gõ Telex nội bộ khi người dùng BẬT thủ công VÀ không dùng Fcitx5
+	if GlobalTelexEnabled && !e.systemIMEDetected {
+		if wordRunes := e.extractWordBeforeCaretUTF8Locked(); len(wordRunes) > 0 && len(wordRunes) <= 15 {
+			candidate := make([]rune, len(wordRunes)+1)
+			copy(candidate, wordRunes)
+			candidate[len(wordRunes)] = r
+			if composedWord, changed := composeTelexWord(candidate); changed {
+				e.applyTelexDiffLocked(wordRunes, composedWord)
+				cb := e.userOnChanged
+				currentText := e.Entry.Text
+				e.mu.Unlock()
+
+				e.Entry.Refresh()
+				if cb != nil {
+					cb(currentText)
+				}
+				return
+			}
 		}
 	}
 
-	// 3. Nếu r là chữ cái tiếp theo nối vào từ đã có dấu (ví dụ đã có "hoá", gõ thêm 'n' -> "hoán"),
-	// kiểm tra xem có cần dịch chuyển vị trí dấu thanh trên từ hay không.
-	if isVietnameseWordRune(r) && len(e.wordBuf) >= 1 && len(e.wordBuf) <= 15 {
-		candidate := make([]rune, len(e.wordBuf)+1)
-		copy(candidate, e.wordBuf)
-		candidate[len(e.wordBuf)] = r
-		rebalanced := repositionToneInWord(candidate)
-		if string(rebalanced) != string(candidate) {
-			e.replaceWordSuffixInPlaceLocked(rebalanced)
-			e.mu.Unlock()
-			e.Entry.Refresh()
-			e.fireUserOnChanged()
-			return
-		}
-	}
-
-	// 4. Chèn ký tự thông thường bằng hàm gốc của Fyne và khóa cứng dòng hiện hành
+	// 3. Chèn trực tiếp 1 rune UTF-8 chuẩn xác từ Fcitx5 / bàn phím và giữ nguyên dòng hiện tại
 	rowBefore := e.Entry.CursorRow
 	colBefore := e.Entry.CursorColumn
-	e.composing = true
 	e.mu.Unlock()
 
 	e.Entry.TypedRune(r)
 
 	e.mu.Lock()
-	e.composing = false
-
-	// Ngăn chặn tuyệt đối lỗi Fyne tự ý nhảy lùi CursorRow về dòng trên sau khi chèn ký tự
+	// Ngăn lỗi nhảy ngược con trỏ lên dòng phía trên khi đang gõ trên dòng mới
 	if e.Entry.CursorRow < rowBefore {
 		e.Entry.CursorRow = rowBefore
 		e.Entry.CursorColumn = colBefore + 1
 	}
-
-	if isVietnameseWordRune(r) {
-		e.wordBuf = append(e.wordBuf, r)
-	} else {
-		e.wordBuf = e.wordBuf[:0]
-	}
-
 	e.lockedRow = e.Entry.CursorRow
 	e.lockedCol = e.Entry.CursorColumn
-	if e.lockedRow > e.mouseFloorRow {
-		// Nếu dòng tự động ngắt xuống dòng mới (soft-wrap), nâng sàn dòng theo dòng mới
-		e.mouseFloorRow = e.lockedRow
-	}
 	e.hasLockedCursor = true
 	e.mu.Unlock()
-
-	e.fireUserOnChanged()
 }
 
-// replaceWordSuffixInPlaceLocked chỉ xóa phần hậu tố thay đổi của từ vừa gõ (thường 1-2 ký tự)
-// bằng KeyBackspace nội bộ và chèn lại các ký tự đã ghép dấu, đồng thời khóa cứng tọa độ
-// (expectedRow, expectedCol) để con trỏ KHÔNG BAO GIỜ bị nhảy ngược lên dòng 1.
-func (e *VietnameseEntry) replaceWordSuffixInPlaceLocked(composedWord []rune) {
-	oldWord := e.wordBuf
+// decodeRuneBeforeCaretLocked giải mã ký tự Unicode (rune) cuối cùng trước con trỏ bằng unicode/utf8.
+func (e *VietnameseEntry) decodeRuneBeforeCaretLocked() (rune, bool) {
+	lines := strings.Split(e.Entry.Text, "\n")
+	if len(lines) == 0 {
+		return 0, false
+	}
+	row := e.Entry.CursorRow
+	if row < 0 || row >= len(lines) {
+		// Khi văn bản có ngắt dòng mềm (TextWrapWord), lấy rune cuối cùng của văn bản nếu đang gõ ở cuối
+		r, width := utf8.DecodeLastRuneInString(e.Entry.Text)
+		if r == utf8.RuneError && width <= 1 {
+			return 0, false
+		}
+		return r, width > 0
+	}
+	lineRunes := DecodeUTF8Runes(lines[row])
+	col := e.Entry.CursorColumn
+	if col <= 0 || col > len(lineRunes) {
+		if len(lineRunes) > 0 {
+			return lineRunes[len(lineRunes)-1], true
+		}
+		return 0, false
+	}
+	return lineRunes[col-1], true
+}
 
-	// Tìm tiền tố chung dài nhất giữa từ cũ và từ mới để giảm tối đa số lần xóa
+// extractWordBeforeCaretUTF8Locked trích xuất từ Tiếng Việt ngay trước con trỏ theo đơn vị rune UTF-8.
+func (e *VietnameseEntry) extractWordBeforeCaretUTF8Locked() []rune {
+	lines := strings.Split(e.Entry.Text, "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+	row := e.Entry.CursorRow
+	if row < 0 || row >= len(lines) {
+		allRunes := DecodeUTF8Runes(e.Entry.Text)
+		end := len(allRunes)
+		start := end
+		for start > 0 && isVietnameseWordRune(allRunes[start-1]) {
+			start--
+		}
+		return allRunes[start:end]
+	}
+
+	lineRunes := DecodeUTF8Runes(lines[row])
+	col := e.Entry.CursorColumn
+	if col < 0 || col > len(lineRunes) {
+		col = len(lineRunes)
+	}
+	start := col
+	for start > 0 && isVietnameseWordRune(lineRunes[start-1]) {
+		start--
+	}
+	return lineRunes[start:col]
+}
+
+func (e *VietnameseEntry) applyTelexDiffLocked(oldWord, newWord []rune) {
 	commonPrefix := 0
 	maxLen := len(oldWord)
-	if len(composedWord) < maxLen {
-		maxLen = len(composedWord)
+	if len(newWord) < maxLen {
+		maxLen = len(newWord)
 	}
-	for commonPrefix < maxLen && oldWord[commonPrefix] == composedWord[commonPrefix] {
+	for commonPrefix < maxLen && oldWord[commonPrefix] == newWord[commonPrefix] {
 		commonPrefix++
 	}
 
 	deleteCount := len(oldWord) - commonPrefix
-	insertSlice := composedWord[commonPrefix:]
+	insertSlice := newWord[commonPrefix:]
 
-	// Ghi nhận tọa độ dòng/cột kỳ vọng ngay trên dòng hiện tại của người dùng
 	expectedRow := e.Entry.CursorRow
-	if e.hasLockedCursor && expectedRow < e.lockedRow {
-		expectedRow = e.lockedRow
-	}
 	expectedCol := e.Entry.CursorColumn - deleteCount + len(insertSlice)
 	if expectedCol < 0 {
-		expectedCol = len(composedWord)
+		expectedCol = len(newWord)
 	}
 
-	e.composing = true
+	e.composingInternal = true
 	e.mu.Unlock()
 
 	for i := 0; i < deleteCount; i++ {
@@ -543,30 +544,18 @@ func (e *VietnameseEntry) replaceWordSuffixInPlaceLocked(composedWord []rune) {
 	}
 
 	e.mu.Lock()
-	e.composing = false
-
-	// KHÓA CHẶT DÒNG HIỆN HÀNH:
-	// Nếu trong tích tắc xóa ký tự đầu của từ trên dòng 2, bộ ngắt dòng (TextWrapWord) hoặc
-	// trạng thái nội bộ của Fyne làm tụt CursorRow về cuối dòng 1 (expectedRow - 1),
-	// lập tức đặt con trỏ trở lại đúng dòng 2 (expectedRow, expectedCol).
+	e.composingInternal = false
 	if e.Entry.CursorRow < expectedRow {
 		e.Entry.CursorRow = expectedRow
 		e.Entry.CursorColumn = expectedCol
 	}
-
-	e.wordBuf = make([]rune, len(composedWord))
-	copy(e.wordBuf, composedWord)
-
 	e.lockedRow = e.Entry.CursorRow
 	e.lockedCol = e.Entry.CursorColumn
-	if e.lockedRow > e.mouseFloorRow {
-		e.mouseFloorRow = e.lockedRow
-	}
 	e.hasLockedCursor = true
 }
 
 // ---------------------------------------------------------------------------
-// Bộ máy Hợp nhất Dấu Tiếng Việt (Dead-Keys, Combining Marks, Telex & VNI)
+// Bảng tra cứu Unicode Tiếng Việt NFC & Chuyển đổi Dấu Tổ Hợp NFD -> NFC
 // ---------------------------------------------------------------------------
 
 type composeActionKind int
@@ -575,15 +564,17 @@ const (
 	actionNone composeActionKind = iota
 	actionTone
 	actionCircumflex // ^ (â, ê, ô)
-	actionHornBreve  // w / 7 (ư, ơ, ă)
-	actionBreveOnly  // 8 (ă)
-	actionHornOnly   // 7 hoặc U+031B (ư, ơ)
-	actionStrokeD    // d / 9 (đ)
+	actionBreveOnly  // ă
+	actionHornOnly   // ư, ơ
 )
 
 type composeAction struct {
 	kind composeActionKind
-	tone int // 0: Ngang (xóa dấu), 1: Sắc, 2: Huyền, 3: Hỏi, 4: Ngã, 5: Nặng
+	tone int // 0: Ngang, 1: Sắc, 2: Huyền, 3: Hỏi, 4: Ngã, 5: Nặng
+}
+
+func isCombiningMarkRune(r rune) bool {
+	return r >= '\u0300' && r <= '\u036F'
 }
 
 func mapCombiningDiacritic(r rune) (composeAction, bool) {
@@ -609,231 +600,51 @@ func mapCombiningDiacritic(r rune) (composeAction, bool) {
 	}
 }
 
-func tryComposeOnWordBuf(wordBuf []rune, keyRune rune) ([]rune, bool) {
-	if len(wordBuf) == 0 || len(wordBuf) > 15 {
-		return nil, false
+func applyCombiningToSingleRune(target rune, act composeAction) (rune, bool) {
+	meta, ok := runeToVowelMeta[target]
+	if !ok {
+		return target, false
 	}
-
-	// 1. Xử lý Dead-Key (' ` ^ ~) hoặc phím số VNI (1..9, 0)
-	if GlobalVNIModeEnabled {
-		var act composeAction
-		switch keyRune {
-		case '\'', '´':
-			act = composeAction{kind: actionTone, tone: 1}
-		case '`':
-			act = composeAction{kind: actionTone, tone: 2}
-		case '~':
-			act = composeAction{kind: actionTone, tone: 4}
-		case '^':
-			act = composeAction{kind: actionCircumflex}
-		case '1':
-			act = composeAction{kind: actionTone, tone: 1}
-		case '2':
-			act = composeAction{kind: actionTone, tone: 2}
-		case '3':
-			act = composeAction{kind: actionTone, tone: 3}
-		case '4':
-			act = composeAction{kind: actionTone, tone: 4}
-		case '5':
-			act = composeAction{kind: actionTone, tone: 5}
-		case '0':
-			act = composeAction{kind: actionTone, tone: 0}
-		case '6':
-			act = composeAction{kind: actionCircumflex}
-		case '7':
-			act = composeAction{kind: actionHornOnly}
-		case '8':
-			act = composeAction{kind: actionBreveOnly}
-		case '9':
-			act = composeAction{kind: actionStrokeD}
-		}
-
-		if act.kind != actionNone {
-			if composed, ok := applyActionToStem(wordBuf, act, keyRune); ok {
-				return composed, true
-			}
-		}
-	}
-
-	// 2. Xử lý quy tắc gõ Telex
-	candidateWord := make([]rune, len(wordBuf)+1)
-	copy(candidateWord, wordBuf)
-	candidateWord[len(wordBuf)] = keyRune
-
-	transformedWord, changed := composeTelexWord(candidateWord)
-	if !changed {
-		return nil, false
-	}
-	return transformedWord, true
-}
-
-func applyActionToStem(wordBuf []rune, act composeAction, rawKey rune) ([]rune, bool) {
-	if len(wordBuf) == 0 {
-		return nil, false
-	}
-	stem := make([]rune, len(wordBuf))
-	copy(stem, wordBuf)
-
 	switch act.kind {
-	case actionStrokeD:
-		if stem[0] == 'd' {
-			stem[0] = 'đ'
-			return stem, true
-		}
-		if stem[0] == 'D' {
-			stem[0] = 'Đ'
-			return stem, true
-		}
-		if stem[0] == 'đ' && unicode.IsPrint(rawKey) {
-			stem[0] = 'd'
-			stem = append(stem, rawKey)
-			return stem, true
-		}
-		if stem[0] == 'Đ' && unicode.IsPrint(rawKey) {
-			stem[0] = 'D'
-			stem = append(stem, rawKey)
-			return stem, true
-		}
-
-	case actionCircumflex:
-		for i := len(stem) - 1; i >= 0; i-- {
-			meta, ok := runeToVowelMeta[stem[i]]
-			if !ok {
-				continue
-			}
-			switch meta.base {
-			case 'a':
-				stem[i] = makeVowelWithTone('â', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'A':
-				stem[i] = makeVowelWithTone('Â', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'e':
-				stem[i] = makeVowelWithTone('ê', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'E':
-				stem[i] = makeVowelWithTone('Ê', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'o':
-				stem[i] = makeVowelWithTone('ô', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'O':
-				stem[i] = makeVowelWithTone('Ô', meta.tone)
-				return repositionToneInWord(stem), true
-			}
-		}
-
-	case actionBreveOnly:
-		for i := len(stem) - 1; i >= 0; i-- {
-			meta, ok := runeToVowelMeta[stem[i]]
-			if !ok {
-				continue
-			}
-			if meta.base == 'a' {
-				stem[i] = makeVowelWithTone('ă', meta.tone)
-				return repositionToneInWord(stem), true
-			}
-			if meta.base == 'A' {
-				stem[i] = makeVowelWithTone('Ă', meta.tone)
-				return repositionToneInWord(stem), true
-			}
-		}
-
-	case actionHornOnly, actionHornBreve:
-		for i := len(stem) - 1; i >= 1; i-- {
-			m2, ok2 := runeToVowelMeta[stem[i]]
-			m1, ok1 := runeToVowelMeta[stem[i-1]]
-			if ok1 && ok2 {
-				b1 := unicode.ToLower(m1.base)
-				b2 := unicode.ToLower(m2.base)
-				if (b1 == 'u' || b1 == 'ư') && (b2 == 'o' || b2 == 'ơ') {
-					uBase := 'ư'
-					if unicode.IsUpper(m1.base) {
-						uBase = 'Ư'
-					}
-					oBase := 'ơ'
-					if unicode.IsUpper(m2.base) {
-						oBase = 'Ơ'
-					}
-					combinedTone := m2.tone
-					if m1.tone != 0 {
-						combinedTone = m1.tone
-					}
-					stem[i-1] = makeVowelWithTone(uBase, 0)
-					stem[i] = makeVowelWithTone(oBase, combinedTone)
-					return repositionToneInWord(stem), true
-				}
-			}
-		}
-		for i := len(stem) - 1; i >= 0; i-- {
-			meta, ok := runeToVowelMeta[stem[i]]
-			if !ok {
-				continue
-			}
-			switch meta.base {
-			case 'u':
-				if i > 0 && unicode.ToLower(stem[i-1]) == 'q' {
-					continue
-				}
-				stem[i] = makeVowelWithTone('ư', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'U':
-				if i > 0 && unicode.ToLower(stem[i-1]) == 'q' {
-					continue
-				}
-				stem[i] = makeVowelWithTone('Ư', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'o':
-				stem[i] = makeVowelWithTone('ơ', meta.tone)
-				return repositionToneInWord(stem), true
-			case 'O':
-				stem[i] = makeVowelWithTone('Ơ', meta.tone)
-				return repositionToneInWord(stem), true
-			}
-		}
-
 	case actionTone:
-		vowelIndices := findTargetVowelIndices(stem)
-		if len(vowelIndices) == 0 {
-			return nil, false
+		return makeVowelWithTone(meta.base, act.tone), true
+	case actionCircumflex:
+		switch meta.base {
+		case 'a':
+			return makeVowelWithTone('â', meta.tone), true
+		case 'A':
+			return makeVowelWithTone('Â', meta.tone), true
+		case 'e':
+			return makeVowelWithTone('ê', meta.tone), true
+		case 'E':
+			return makeVowelWithTone('Ê', meta.tone), true
+		case 'o':
+			return makeVowelWithTone('ô', meta.tone), true
+		case 'O':
+			return makeVowelWithTone('Ô', meta.tone), true
 		}
-		currentTone := 0
-		for _, idx := range vowelIndices {
-			if m, ok := runeToVowelMeta[stem[idx]]; ok && m.tone != 0 {
-				currentTone = m.tone
-				break
-			}
+	case actionBreveOnly:
+		switch meta.base {
+		case 'a':
+			return makeVowelWithTone('ă', meta.tone), true
+		case 'A':
+			return makeVowelWithTone('Ă', meta.tone), true
 		}
-		if act.tone == 0 && currentTone == 0 {
-			return nil, false
-		}
-		if act.tone != 0 && currentTone == act.tone && unicode.IsPrint(rawKey) && rawKey < 128 {
-			for _, idx := range vowelIndices {
-				if m, ok := runeToVowelMeta[stem[idx]]; ok {
-					stem[idx] = makeVowelWithTone(m.base, 0)
-				}
-			}
-			stem = append(stem, rawKey)
-			return stem, true
-		}
-
-		for _, idx := range vowelIndices {
-			if m, ok := runeToVowelMeta[stem[idx]]; ok {
-				stem[idx] = makeVowelWithTone(m.base, 0)
-			}
-		}
-		primaryIdx := selectPrimaryToneIndex(stem, vowelIndices)
-		if m, ok := runeToVowelMeta[stem[primaryIdx]]; ok {
-			stem[primaryIdx] = makeVowelWithTone(m.base, act.tone)
-			return stem, true
+	case actionHornOnly:
+		switch meta.base {
+		case 'o':
+			return makeVowelWithTone('ơ', meta.tone), true
+		case 'O':
+			return makeVowelWithTone('Ơ', meta.tone), true
+		case 'u':
+			return makeVowelWithTone('ư', meta.tone), true
+		case 'U':
+			return makeVowelWithTone('Ư', meta.tone), true
 		}
 	}
-
-	return nil, false
+	return target, false
 }
 
-// Bảng tra cứu nguyên âm Tiếng Việt với 6 thanh điệu:
-// Index: 0: Ngang, 1: Sắc (s/1), 2: Huyền (f/2), 3: Hỏi (r/3), 4: Ngã (x/4), 5: Nặng (j/5)
 var vietVowelTable = map[rune][6]rune{
 	'a': {'a', 'á', 'à', 'ả', 'ã', 'ạ'},
 	'ă': {'ă', 'ắ', 'ằ', 'ẳ', 'ẵ', 'ặ'},
@@ -898,29 +709,17 @@ func composeTelexWord(word []rune) ([]rune, bool) {
 	stem := make([]rune, n-1)
 	copy(stem, word[:n-1])
 
-	// 1. Xử lý dd / DD -> đ / Đ ở đầu từ
-	if lastKey == 'd' && len(stem) >= 1 {
-		if stem[0] == 'd' && len(stem) == 1 {
+	if lastKey == 'd' && len(stem) == 1 {
+		switch stem[0] {
+		case 'd':
 			stem[0] = 'đ'
 			return stem, true
-		}
-		if stem[0] == 'D' && len(stem) == 1 {
+		case 'D':
 			stem[0] = 'Đ'
-			return stem, true
-		}
-		if stem[0] == 'đ' && len(stem) == 1 {
-			stem[0] = 'd'
-			stem = append(stem, word[n-1])
-			return stem, true
-		}
-		if stem[0] == 'Đ' && len(stem) == 1 {
-			stem[0] = 'D'
-			stem = append(stem, word[n-1])
 			return stem, true
 		}
 	}
 
-	// 2. Xử lý mũ và móc nguyên âm (aa -> â, aw -> ă, ee -> ê, oo -> ô, ow -> ơ, uw -> ư)
 	switch lastKey {
 	case 'a', 'e', 'o':
 		for i := len(stem) - 1; i >= 0; i-- {
@@ -928,8 +727,7 @@ func composeTelexWord(word []rune) ([]rune, bool) {
 			if !ok {
 				continue
 			}
-			lowerBase := unicode.ToLower(meta.base)
-			if lowerBase == lastKey {
+			if unicode.ToLower(meta.base) == lastKey {
 				var newBase rune
 				switch meta.base {
 				case 'a':
@@ -953,7 +751,6 @@ func composeTelexWord(word []rune) ([]rune, bool) {
 		}
 
 	case 'w':
-		// Trường hợp đặc biệt "uo" + "w" -> "ươ"
 		for i := len(stem) - 1; i >= 1; i-- {
 			m2, ok2 := runeToVowelMeta[stem[i]]
 			m1, ok1 := runeToVowelMeta[stem[i-1]]
@@ -980,7 +777,6 @@ func composeTelexWord(word []rune) ([]rune, bool) {
 			}
 		}
 
-		// Trường hợp đơn: u -> ư, o -> ơ, a -> ă
 		for i := len(stem) - 1; i >= 0; i-- {
 			meta, ok := runeToVowelMeta[stem[i]]
 			if !ok {
@@ -1014,7 +810,6 @@ func composeTelexWord(word []rune) ([]rune, bool) {
 		}
 	}
 
-	// 3. Xử lý phím dấu thanh: s (sắc), f (huyền), r (hỏi), x (ngã), j (nặng), z (xóa dấu)
 	toneMap := map[rune]int{
 		's': 1,
 		'f': 2,
@@ -1065,12 +860,6 @@ func composeTelexWord(word []rune) ([]rune, bool) {
 		}
 	}
 
-	// 4. Tự động cân chỉnh vị trí dấu khi gõ thêm phụ âm cuối
-	repositioned := repositionToneInWord(word)
-	if string(repositioned) != string(word) {
-		return repositioned, true
-	}
-
 	return word, false
 }
 
@@ -1104,11 +893,15 @@ func findTargetVowelIndices(runes []rune) []int {
 	return indices
 }
 
+// selectPrimaryToneIndex xác định đúng nguyên âm đặt dấu theo chuẩn chính tả Tiếng Việt:
+// Với nguyên âm đôi mở như "ai", "ao", "au", "ay", "ia", "ua", "ưa" (như trong "lại", "phải"),
+// dấu thanh LUÔN đặt ở nguyên âm đầu tiên ('a' -> "lại", "phải", tuyệt đối không nhảy sang 'i' thành "phaỉ").
 func selectPrimaryToneIndex(runes []rune, vowelIndices []int) int {
 	if len(vowelIndices) == 1 {
 		return vowelIndices[0]
 	}
 
+	// 1. Nếu có nguyên âm mang dấu mũ hoặc móc (ă, â, ê, ô, ơ, ư) -> ưu tiên đặt dấu lên nguyên âm đó
 	for i := len(vowelIndices) - 1; i >= 0; i-- {
 		idx := vowelIndices[i]
 		base := unicode.ToLower(runeToVowelMeta[runes[idx]].base)
@@ -1117,12 +910,23 @@ func selectPrimaryToneIndex(runes []rune, vowelIndices []int) int {
 		}
 	}
 
+	// 2. Chỉ xem là có phụ âm cuối nếu ký tự sau nguyên âm cuối cùng thực sự là PHỤ ÂM (không phải nguyên âm như 'i', 'y', 'o', 'u')
 	lastVowelIdx := vowelIndices[len(vowelIndices)-1]
-	hasEndingConsonant := lastVowelIdx < len(runes)-1
+	hasEndingConsonant := false
+	for i := lastVowelIdx + 1; i < len(runes); i++ {
+		if unicode.IsLetter(runes[i]) {
+			if _, isVowel := runeToVowelMeta[runes[i]]; !isVowel {
+				hasEndingConsonant = true
+				break
+			}
+		}
+	}
+
 	if hasEndingConsonant || len(vowelIndices) >= 3 {
 		return vowelIndices[1]
 	}
 
+	// 3. Nguyên âm đôi mở: chỉ "oa", "oe", "uy" đặt ở nguyên âm thứ 2; còn lại ("ai", "ao", "au", "ay", "ia", "ua"...) đặt ở nguyên âm thứ 1
 	firstBase := unicode.ToLower(runeToVowelMeta[runes[vowelIndices[0]]].base)
 	secondBase := unicode.ToLower(runeToVowelMeta[runes[vowelIndices[1]]].base)
 	if (firstBase == 'o' && (secondBase == 'a' || secondBase == 'e')) ||
