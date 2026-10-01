@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -102,11 +100,24 @@ func (ui *NovelistUI) buildMainMenu() {
 			ui.reloadProjectSelector(*proj)
 		}),
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Xuất bản thảo ra Markdown (.md)...", func() {
-			ui.exportManuscript("markdown")
+		fyne.NewMenuItem("Xuất bản ra Text (.txt)...", func() {
+			ui.ShowExportDialog(ExportFormatTXT)
 		}),
-		fyne.NewMenuItem("Xuất bản thảo ra HTML (.html)...", func() {
-			ui.exportManuscript("html")
+		fyne.NewMenuItem("Xuất bản ra ODT (.odt)...", func() {
+			ui.ShowExportDialog(ExportFormatODT)
+		}),
+		fyne.NewMenuItem("Xuất bản ra PDF (.pdf)...", func() {
+			ui.ShowExportDialog(ExportFormatPDF)
+		}),
+		fyne.NewMenuItem("Xuất bản ra EPUB (.epub)...", func() {
+			ui.ShowExportDialog(ExportFormatEPUB)
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Xuất bản ra Markdown (.md)...", func() {
+			ui.ShowExportDialog(ExportFormatMarkdown)
+		}),
+		fyne.NewMenuItem("Xuất bản ra HTML (.html)...", func() {
+			ui.ShowExportDialog(ExportFormatHTML)
 		}),
 	)
 
@@ -172,6 +183,11 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 		ui.openWorldBuildingHub()
 	})
 	worldHubBtn.Importance = widget.HighImportance
+
+	// Nút mở Hộp thoại Xuất Bản Thảo Đa Định Dạng (TXT, ODT, PDF, EPUB, MD, HTML)
+	exportHubBtn := widget.NewButtonWithIcon("Xuất bản thảo (PDF / EPUB / ODT / TXT)...", theme.DocumentSaveIcon(), func() {
+		ui.ShowExportDialog(ExportFormatPDF)
+	})
 
 	// Công tắc bật/tắt bộ gõ Tiếng Việt Telex nội bộ
 	telexCheck := widget.NewCheck("Bộ gõ Tiếng Việt Telex tích hợp", func(checked bool) {
@@ -290,6 +306,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 		widget.NewLabelWithStyle("TÁC PHẨM ĐANG MỞ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ui.projectSelect,
 		worldHubBtn,
+		exportHubBtn,
 		telexCheck,
 		widget.NewSeparator(),
 		container.NewGridWithColumns(3, addActBtn, addChapBtn, addSceneBtn),
@@ -763,28 +780,5 @@ func (ui *NovelistUI) confirmDeleteNode() {
 }
 
 func (ui *NovelistUI) exportManuscript(format string) {
-	ui.editorPanel.FlushPendingSave()
-
-	var compiled string
-	var err error
-	ext := ".md"
-	if format == "html" {
-		compiled, err = ui.store.ExportManuscriptHTML(ui.activeProject)
-		ext = ".html"
-	} else {
-		compiled, err = ui.store.ExportManuscriptMarkdown(ui.activeProject)
-	}
-	if err != nil {
-		dialog.ShowError(err, ui.window)
-		return
-	}
-
-	outName := filepath.Clean(ui.activeProject.Title) + "_ban_thao" + ext
-	if err := os.WriteFile(outName, []byte(compiled), 0644); err != nil {
-		dialog.ShowError(err, ui.window)
-		return
-	}
-	dialog.ShowInformation("Xuất bản thảo thành công",
-		fmt.Sprintf("Đã biên dịch tuần tự toàn bộ Hồi, Chương và Cảnh ra tệp:\n%s", outName),
-		ui.window)
+	ui.ShowExportDialog(ExportFormat(format))
 }

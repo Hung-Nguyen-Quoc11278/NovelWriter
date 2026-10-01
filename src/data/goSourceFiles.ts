@@ -2,6 +2,7 @@ import mainGoRaw from '../../gonovelist/main.go?raw';
 import vietInputGoRaw from '../../gonovelist/vietnamese_input.go?raw';
 import modelsGoRaw from '../../gonovelist/models.go?raw';
 import databaseGoRaw from '../../gonovelist/database.go?raw';
+import exportGoRaw from '../../gonovelist/export.go?raw';
 import uiWorldBuildingGoRaw from '../../gonovelist/ui_worldbuilding.go?raw';
 import uiMainGoRaw from '../../gonovelist/ui_main.go?raw';
 import uiEditorGoRaw from '../../gonovelist/ui_editor.go?raw';
@@ -16,6 +17,7 @@ export interface GoSourceFile {
     | 'Bộ Gõ & Phông Chữ Tiếng Việt'
     | 'Tầng Mô Hình (Domain Layer)'
     | 'Tầng Dữ Liệu & Dịch Vụ (SQLite)'
+    | 'Hệ Thống Xuất Bản Đa Định Dạng'
     | 'Tầng Giao Diện (Fyne v2 UI)'
     | 'Lược Đồ CSDL (SQLite DDL)'
     | 'Cấu Hình Module';
@@ -27,12 +29,13 @@ export const PROJECT_TREE_LAYOUT = `gonovelist/
 ├── go.mod                 # Định nghĩa module Go 1.22+ (fyne.io/fyne/v2 v2.5.3, modernc.org/sqlite)
 ├── schema.sql             # Lược đồ SQLite (projects, acts, chapters, scenes, characters, locations, props, events, tags, entity_tags)
 ├── main.go                # Điểm khởi chạy ứng dụng, tự động nạp phông chữ Tiếng Việt & khởi tạo SQLite
-├── vietnamese_input.go    # Bộ gõ Tiếng Việt Telex tích hợp cho Fyne widget.Entry & tự động dò tìm phông chữ Unicode
+├── vietnamese_input.go    # Bộ gõ Tiếng Việt Telex / Fcitx5 UTF-8 chuẩn xác & DynamicFontTheme phóng to/thu nhỏ chữ
 ├── models.go              # Các struct miền dữ liệu (Project, Act, Chapter, Scene, Character, Location, Prop, Event, Tag)
-├── database.go            # Tầng truy xuất SQLite, миграции tự động, quản lý Thẻ đa hình (entity_tags) & xuất bản thảo
+├── database.go            # Tầng truy xuất SQLite, миграции tự động, quản lý Thẻ đa hình (entity_tags)
+├── export.go              # Hệ thống xuất bản đa định dạng (.txt, .odt, .pdf, .epub, .md, .html) & chọn Phạm vi xuất bản
 ├── ui_worldbuilding.go    # Trung tâm Xây dựng Thế giới đa tab (Nhân vật, Địa điểm, Vật phẩm, Sự kiện, Quản lý Thẻ & Lọc theo thẻ)
-├── ui_main.go             # Cửa sổ chính Fyne v2, cây phân cấp Hồi -> Chương -> Cảnh, nút mở Trung tâm Thế giới & bật/tắt Telex
-└── ui_editor.go           # Trình soạn thảo văn xuôi Tiếng Việt, auto-save 750ms & thanh bên Ngữ cảnh Cảnh (Nhân vật, Vật phẩm, Sự kiện)`;
+├── ui_main.go             # Cửa sổ chính Fyne v2, menu Xuất bản đa định dạng, phím tắt thu phóng chữ & cây phân cấp
+└── ui_editor.go           # Trình soạn thảo văn xuôi Tiếng Việt, thanh công cụ A-/A+, auto-save 750ms & Ngữ cảnh Cảnh`;
 
 export const BUILD_COMMANDS = `# 1. Tạo thư mục dự án và khởi tạo module Go (Yêu cầu Go 1.22+)
 mkdir -p gonovelist && cd gonovelist
@@ -85,6 +88,14 @@ export const GO_SOURCE_FILES: GoSourceFile[] = [
     summary:
       'Cập nhật migration SQLite cho bảng props, events, tags, entity_tags, scene_props, scene_events; cung cấp CRUD đầy đủ và dữ liệu mẫu Tiếng Việt.',
     code: databaseGoRaw,
+  },
+  {
+    filename: 'export.go',
+    path: 'gonovelist/export.go',
+    layer: 'Hệ Thống Xuất Bản Đa Định Dạng',
+    summary:
+      'Hệ thống xuất bản thảo chuyên nghiệp ra Plain Text (.txt), OpenDocument Text (.odt), PDF (.pdf nhúng TrueType Unicode Tiếng Việt), EPUB (.epub), Markdown (.md), HTML (.html) kèm hộp thoại chọn Phạm vi xuất bản (Toàn bộ tác phẩm / Theo Hồi chỉ định / Chương-Cảnh hiện tại).',
+    code: exportGoRaw,
   },
   {
     filename: 'ui_worldbuilding.go',
