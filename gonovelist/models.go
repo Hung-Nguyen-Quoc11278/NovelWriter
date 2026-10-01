@@ -7,18 +7,18 @@ import (
 	"unicode"
 )
 
-// SceneStatus represents the editorial lifecycle stage of a Scene.
+// SceneStatus biểu thị trạng thái biên tập của một Cảnh (Scene).
 type SceneStatus string
 
 const (
-	StatusIdea      SceneStatus = "Idea"
-	StatusDrafting  SceneStatus = "Drafting"
-	StatusCompleted SceneStatus = "Completed"
-	StatusEdited    SceneStatus = "Edited"
+	StatusIdea      SceneStatus = "Ý tưởng"
+	StatusDrafting  SceneStatus = "Đang viết"
+	StatusCompleted SceneStatus = "Hoàn thành"
+	StatusEdited    SceneStatus = "Đã biên tập"
 )
 
-// AllStatuses returns all valid SceneStatus values in workflow order.
-func AllStatuses() []string {
+// AllSceneStatuses trả về danh sách các trạng thái chuẩn tiếng Việt cho UI.
+func AllSceneStatuses() []string {
 	return []string{
 		string(StatusIdea),
 		string(StatusDrafting),
@@ -27,7 +27,23 @@ func AllStatuses() []string {
 	}
 }
 
-// Project is the root container of a novel manuscript.
+// NormalizeStatus chuyển đổi các trạng thái tiếng Anh cũ (nếu có trong DB cũ) sang tiếng Việt.
+func NormalizeStatus(raw SceneStatus) SceneStatus {
+	switch strings.TrimSpace(string(raw)) {
+	case "Idea", string(StatusIdea):
+		return StatusIdea
+	case "Drafting", string(StatusDrafting):
+		return StatusDrafting
+	case "Completed", string(StatusCompleted):
+		return StatusCompleted
+	case "Edited", string(StatusEdited):
+		return StatusEdited
+	default:
+		return StatusIdea
+	}
+}
+
+// Project đại diện cho một dự án tiểu thuyết / tác phẩm.
 type Project struct {
 	ID          int64
 	Title       string
@@ -39,47 +55,31 @@ type Project struct {
 	UpdatedAt   time.Time
 }
 
-// Act represents a major structural division within a Project (e.g., Act I, Act II).
+// Act đại diện cho một Hồi / Phần lớn trong cấu trúc tiểu thuyết.
 type Act struct {
 	ID        int64
 	ProjectID int64
 	Title     string
-	SortOrder int
-	Chapters  []Chapter
+	Position  int
+	CreatedAt time.Time
 }
 
-// Chapter represents a chapter belonging to an Act.
+// Chapter đại diện cho một Chương thuộc về một Hồi.
 type Chapter struct {
 	ID          int64
 	ActID       int64
 	Title       string
+	Position    int
 	TargetWords int
-	SortOrder   int
-	Scenes      []Scene
+	CreatedAt   time.Time
 }
 
-// Character represents a named cast member in the Project.
-type Character struct {
-	ID        int64
-	ProjectID int64
-	Name      string
-	Role      string
-	Bio       string
-}
-
-// Location represents a setting or backdrop in the Project.
-type Location struct {
-	ID          int64
-	ProjectID   int64
-	Name        string
-	Description string
-}
-
-// Scene is the atomic writing unit containing prose, side notes, and context mappings.
+// Scene là đơn vị viết chính chứa nội dung văn xuôi, ghi chú bên lề và siêu dữ liệu.
 type Scene struct {
 	ID             int64
 	ChapterID      int64
 	Title          string
+	Summary        string
 	Content        string
 	SideNotes      string
 	Status         SceneStatus
@@ -87,63 +87,74 @@ type Scene struct {
 	LocationID     *int64
 	TargetWords    int
 	WordCount      int
-	SortOrder      int
+	Position       int
 	UpdatedAt      time.Time
 	CharacterIDs   []int64
 }
 
-// NodeKind identifies the level of a node in the Fyne sidebar Tree.
-type NodeKind string
-
-const (
-	NodeAct     NodeKind = "act"
-	NodeChapter NodeKind = "chapter"
-	NodeScene   NodeKind = "scene"
-)
-
-// TreeNode wraps a hierarchical item for Fyne's widget.Tree UID system.
-type TreeNode struct {
-	UID       string
-	Kind      NodeKind
-	ID        int64
-	ParentID  int64
-	Title     string
-	Status    SceneStatus
-	WordCount int
-	Target    int
+// Character đại diện cho một Nhân vật trong dự án tiểu thuyết.
+type Character struct {
+	ID          int64
+	ProjectID   int64
+	Name        string
+	Role        string
+	Description string
 }
 
-// MakeUID generates a deterministic Fyne TreeNodeUID string such as "act:1" or "scene:14".
-func MakeUID(kind NodeKind, id int64) string {
+// Location đại diện cho một Bối cảnh / Địa điểm trong dự án tiểu thuyết.
+type Location struct {
+	ID          int64
+	ProjectID   int64
+	Name        string
+	Description string
+}
+
+// HierarchyNode biểu diễn một nút trên cây phân cấp (Hồi, Chương, hoặc Cảnh).
+type HierarchyNode struct {
+	UID         string
+	Kind        string // "act", "chapter", "scene"
+	DatabaseID  int64
+	ParentID    int64
+	Title       string
+	Subtitle    string
+	WordCount   int
+	TargetWords int
+	Status      SceneStatus
+}
+
+// MakeNodeUID tạo định danh duy nhất cho mỗi nút trên Fyne Tree.
+func MakeNodeUID(kind string, id int64) string {
 	return fmt.Sprintf("%s:%d", kind, id)
 }
 
-// ParseUID extracts the NodeKind and database ID from a Fyne TreeNodeUID.
-func ParseUID(uid string) (NodeKind, int64, error) {
-	parts := strings.SplitN(uid, ":", 2)
+// ParseNodeUID tách định danh nút cây thành loại ("act", "chapter", "scene") và ID cơ sở dữ liệu.
+func ParseNodeUID(uid string) (string, int64, error) {
+	parts := strings.Split(uid, ":")
 	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid tree UID: %s", uid)
+		return "", 0, fmt.Errorf("UID nút không hợp lệ: %s", uid)
 	}
 	var id int64
 	_, err := fmt.Sscanf(parts[1], "%d", &id)
 	if err != nil {
 		return "", 0, err
 	}
-	return NodeKind(parts[0]), id, nil
+	return parts[0], id, nil
 }
 
-// CountWords performs a fast, allocation-free Unicode word count on prose content.
+// CountWords đếm số từ chuẩn xác cho văn bản tiếng Việt (Unicode) và tiếng Anh.
 func CountWords(text string) int {
-	inWord := false
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return 0
+	}
 	count := 0
-	for _, r := range text {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) || r == '\'' || r == '’' {
-			if !inWord {
-				inWord = true
-				count++
-			}
-		} else {
+	inWord := false
+	for _, r := range trimmed {
+		if unicode.IsSpace(r) {
 			inWord = false
+		} else if !inWord {
+			inWord = true
+			count++
 		}
 	}
 	return count

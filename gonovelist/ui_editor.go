@@ -11,348 +11,380 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// EditorPanel manages the prose editor, debounced auto-save engine, metadata sidebar,
-// side-notes scratchpad, and real-time Scene/Chapter word count progress bars.
+const noneOptionLabel = "(Chưa chọn)"
+
+// EditorPanel quản lý trình soạn thảo văn xuôi, bộ tự động lưu (auto-save), siêu dữ liệu và ghi chú bên lề.
 type EditorPanel struct {
-	store          *Store
-	window         fyne.Window
-	onSaved        func()
-	currentProjID  int64
-	currentScene   *Scene
-	suppressEvents bool
+	store     *Store
+	window    fyne.Window
+	projectID int64
+	onSaved   func()
 
-	// Debounced auto-save synchronization
-	saveMu    sync.Mutex
-	saveTimer *time.Timer
+	mu          sync.Mutex
+	activeScene *Scene
+	loading     bool
+	saveTimer   *time.Timer
 
-	// Lookup caches for Character & Location widgets
+	// Các thành phần trình soạn thảo trung tâm
+	titleEntry       *widget.Entry
+	summaryEntry     *widget.Entry
+	proseEntry       *widget.Entry
+	targetWordsEntry *widget.Entry
+
+	// Thanh tiến độ và đếm từ thời gian thực
+	sceneWordLabel   *widget.Label
+	chapterWordLabel *widget.Label
+	sceneProgress    *widget.ProgressBar
+	chapterProgress  *widget.ProgressBar
+	saveStateLabel   *widget.Label
+
+	// Bảng ngữ cảnh & siêu dữ liệu bên phải (Nhân vật, Bối cảnh, Góc nhìn POV, Trạng thái, Ghi chú)
+	statusSelect      *widget.Select
+	povSelect         *widget.Select
+	locationSelect    *widget.Select
+	charactersCheck   *widget.CheckGroup
+	sideNotesEntry    *widget.Entry
+	inspectorTabs     *container.AppTabs
+	splitContainer    *container.Split
+
+	// Bộ nhớ đệm danh sách Nhân vật & Bối cảnh
 	characters []Character
 	locations  []Location
-
-	// UI Widgets
-	rootSplit       *container.Split
-	inspectorBox    *fyne.Container
-	sceneTitleEntry *widget.Entry
-	saveStateLabel  *widget.Label
-	proseEntry      *widget.Entry
-	richPreview     *widget.RichText
-	sideNotesEntry  *widget.Entry
-
-	// Metadata & Context controls
-	statusSelect    *widget.Select
-	povSelect       *widget.Select
-	locationSelect  *widget.Select
-	charCheckGroup  *widget.CheckGroup
-	targetWordEntry *widget.Entry
-
-	// Progress & Word Count widgets
-	sceneWordLabel   *widget.Label
-	sceneProgress    *widget.ProgressBar
-	chapterWordLabel *widget.Label
-	chapterProgress  *widget.ProgressBar
 }
 
-// NewEditorPanel initializes the center editor and right context inspector.
-func NewEditorPanel(store *Store, w fyne.Window, onSaved func()) *EditorPanel {
+// NewEditorPanel khởi tạo khung soạn thảo văn xuôi và bảng ngữ cảnh bên phải bằng tiếng Việt.
+func NewEditorPanel(store *Store, window fyne.Window, projectID int64, onSaved func()) *EditorPanel {
 	ep := &EditorPanel{
-		store:   store,
-		window:  w,
-		onSaved: onSaved,
+		store:     store,
+		window:    window,
+		projectID: projectID,
+		onSaved:   onSaved,
 	}
 	ep.buildUI()
+	ep.ReloadMetadataOptions(projectID)
 	return ep
 }
 
-// Container returns the top-level Fyne CanvasObject for embedding in the main split view.
-func (ep *EditorPanel) Container() fyne.CanvasObject {
-	return ep.rootSplit
-}
-
 func (ep *EditorPanel) buildUI() {
-	ep.sceneTitleEntry = widget.NewEntry()
-	ep.sceneTitleEntry.SetPlaceHolder("Scene Title")
-	ep.sceneTitleEntry.OnChanged = func(val string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		ep.currentScene.Title = val
-		ep.scheduleAutoSave()
-	}
+	ep.titleEntry = widget.NewEntry()
+	ep.titleEntry.SetPlaceHolder("Tiêu đề cảnh...")
+	ep.titleEntry.OnChanged = func(_ string) { ep.scheduleAutoSave() }
 
-	ep.saveStateLabel = widget.NewLabel("Saved to SQLite")
-	ep.saveStateLabel.TextStyle = fyne.TextStyle{Monospace: true}
+	ep.summaryEntry = widget.NewEntry()
+	ep.summaryEntry.SetPlaceHolder("Tóm tắt ngắn gọn nội dung hoặc mục đích kịch tính của cảnh...")
+	ep.summaryEntry.OnChanged = func(_ string) { ep.scheduleAutoSave() }
 
-	// Formatting insert helpers for Markdown-aware RichText
-	boldBtn := widget.NewButton("B", func() { ep.insertSnippet("**bold**") })
-	italicBtn := widget.NewButton("I", func() { ep.insertSnippet("*italic*") })
-	h2Btn := widget.NewButton("H2", func() { ep.insertSnippet("\n## Subheading\n") })
-	quoteBtn := widget.NewButton("Quote", func() { ep.insertSnippet("\n> ") })
-	breakBtn := widget.NewButton("* * *", func() { ep.insertSnippet("\n\n* * *\n\n") })
+	ep.targetWordsEntry = widget.NewEntry()
+	ep.targetWordsEntry.SetPlaceHolder("1200")
+	ep.targetWordsEntry.OnChanged = func(_ string) { ep.scheduleAutoSave() }
 
-	headerBar := container.NewBorder(
-		nil, nil,
-		container.NewHBox(boldBtn, italicBtn, h2Btn, quoteBtn, breakBtn),
-		ep.saveStateLabel,
-		ep.sceneTitleEntry,
-	)
-
-	// Multi-line prose editor
 	ep.proseEntry = widget.NewMultiLineEntry()
 	ep.proseEntry.Wrapping = fyne.TextWrapWord
-	ep.proseEntry.SetPlaceHolder("Begin writing your scene prose...")
-	ep.proseEntry.OnChanged = func(text string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		ep.currentScene.Content = text
-		ep.richPreview.ParseMarkdown(text)
+	ep.proseEntry.SetPlaceHolder("Bắt đầu viết nội dung cảnh tại đây... Mọi thay đổi sẽ được tự động lưu vào SQLite.")
+	ep.proseEntry.OnChanged = func(_ string) {
 		ep.updateLiveWordCounts()
 		ep.scheduleAutoSave()
 	}
 
-	ep.richPreview = widget.NewRichTextFromMarkdown("")
-	ep.richPreview.Wrapping = fyne.TextWrapWord
+	ep.sceneWordLabel = widget.NewLabel("Cảnh: 0 / 1200 từ")
+	ep.chapterWordLabel = widget.NewLabel("Chương: 0 / 3000 từ")
+	ep.saveStateLabel = widget.NewLabel("Đã lưu")
 
-	editorTabs := container.NewAppTabs(
-		container.NewTabItem("Write Prose", ep.proseEntry),
-		container.NewTabItem("Typeset Preview", container.NewVScroll(ep.richPreview)),
-	)
-
-	// Bottom Word Count & Progress Status Bar
-	ep.sceneWordLabel = widget.NewLabel("Scene: 0 / 1200 words")
-	ep.sceneWordLabel.TextStyle = fyne.TextStyle{Monospace: true}
 	ep.sceneProgress = widget.NewProgressBar()
-
-	ep.chapterWordLabel = widget.NewLabel("Chapter: 0 / 3000 words")
-	ep.chapterWordLabel.TextStyle = fyne.TextStyle{Monospace: true}
 	ep.chapterProgress = widget.NewProgressBar()
 
-	progressFooter := container.NewGridWithColumns(2,
-		container.NewVBox(ep.sceneWordLabel, ep.sceneProgress),
-		container.NewVBox(ep.chapterWordLabel, ep.chapterProgress),
-	)
-
-	centerPane := container.NewBorder(
-		container.NewVBox(headerBar, widget.NewSeparator()),
-		container.NewVBox(widget.NewSeparator(), progressFooter),
-		nil, nil,
-		editorTabs,
-	)
-
-	// Right-Hand Context & Metadata Mapping + Side Notes Panel
-	ep.statusSelect = widget.NewSelect(AllStatuses(), func(val string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		ep.currentScene.Status = SceneStatus(val)
+	// Các điều khiển Siêu dữ liệu (Metadata)
+	ep.statusSelect = widget.NewSelect(AllSceneStatuses(), func(_ string) {
 		ep.scheduleAutoSave()
 	})
 
-	ep.povSelect = widget.NewSelect([]string{"(None)"}, func(val string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		ep.currentScene.POVCharacterID = ep.findCharacterIDByName(val)
+	ep.povSelect = widget.NewSelect([]string{noneOptionLabel}, func(_ string) {
 		ep.scheduleAutoSave()
 	})
 
-	ep.locationSelect = widget.NewSelect([]string{"(None)"}, func(val string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		ep.currentScene.LocationID = ep.findLocationIDByName(val)
+	ep.locationSelect = widget.NewSelect([]string{noneOptionLabel}, func(_ string) {
 		ep.scheduleAutoSave()
 	})
 
-	ep.charCheckGroup = widget.NewCheckGroup([]string{}, func(selected []string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		var ids []int64
-		for _, name := range selected {
-			if idPtr := ep.findCharacterIDByName(name); idPtr != nil {
-				ids = append(ids, *idPtr)
-			}
-		}
-		ep.currentScene.CharacterIDs = ids
+	ep.charactersCheck = widget.NewCheckGroup([]string{}, func(_ []string) {
 		ep.scheduleAutoSave()
 	})
-
-	ep.targetWordEntry = widget.NewEntry()
-	ep.targetWordEntry.SetPlaceHolder("1200")
-	ep.targetWordEntry.OnChanged = func(val string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		var target int
-		if _, err := fmt.Sscanf(val, "%d", &target); err == nil && target > 0 {
-			ep.currentScene.TargetWords = target
-			ep.updateLiveWordCounts()
-			ep.scheduleAutoSave()
-		}
-	}
-
-	metaForm := container.NewVBox(
-		widget.NewLabelWithStyle("Scene Status", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		ep.statusSelect,
-		widget.NewLabelWithStyle("Point of View (POV)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		ep.povSelect,
-		widget.NewLabelWithStyle("Setting / Location", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		ep.locationSelect,
-		widget.NewLabelWithStyle("Scene Word Target", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		ep.targetWordEntry,
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Characters in Scene", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		ep.charCheckGroup,
-		layout.NewSpacer(),
-	)
 
 	ep.sideNotesEntry = widget.NewMultiLineEntry()
 	ep.sideNotesEntry.Wrapping = fyne.TextWrapWord
-	ep.sideNotesEntry.SetPlaceHolder("Scratchpad for scene continuity notes, research fragments, and dialogue ideas...")
-	ep.sideNotesEntry.OnChanged = func(notes string) {
-		if ep.suppressEvents || ep.currentScene == nil {
-			return
-		}
-		ep.currentScene.SideNotes = notes
+	ep.sideNotesEntry.SetPlaceHolder("Ghi chú bên lề, ý tưởng đột xuất, câu thoại nháp hoặc tư liệu lịch sử cho cảnh này...")
+	ep.sideNotesEntry.OnChanged = func(_ string) {
 		ep.scheduleAutoSave()
 	}
 
-	inspectorTabs := container.NewAppTabs(
-		container.NewTabItem("Context & Cast", container.NewVScroll(metaForm)),
-		container.NewTabItem("Side Notes", ep.sideNotesEntry),
+	// Bố cục khu vực soạn thảo trung tâm
+	headerForm := container.NewVBox(
+		container.NewBorder(
+			nil, nil,
+			widget.NewLabelWithStyle("Cảnh:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			container.NewHBox(widget.NewLabel("Mục tiêu từ:"), ep.targetWordsEntry),
+			ep.titleEntry,
+		),
+		ep.summaryEntry,
+		widget.NewSeparator(),
 	)
 
-	ep.inspectorBox = container.NewMax(inspectorTabs)
-	ep.rootSplit = container.NewHSplit(centerPane, ep.inspectorBox)
-	ep.rootSplit.Offset = 0.70
+	footerStats := container.NewVBox(
+		widget.NewSeparator(),
+		container.NewGridWithColumns(2,
+			container.NewBorder(nil, nil, ep.sceneWordLabel, nil, ep.sceneProgress),
+			container.NewBorder(nil, nil, ep.chapterWordLabel, nil, ep.chapterProgress),
+		),
+		container.NewHBox(
+			widget.NewLabelWithStyle("Trạng thái lưu SQLite:", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+			ep.saveStateLabel,
+			layout.NewSpacer(),
+		),
+	)
+
+	centerEditor := container.NewBorder(headerForm, footerStats, nil, nil, ep.proseEntry)
+
+	// Bố cục thanh thanh tra Ngữ cảnh & Ghi chú bên phải
+	contextTabContent := container.NewVScroll(container.NewVBox(
+		widget.NewLabelWithStyle("TRẠNG THÁI BIÊN TẬP", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		ep.statusSelect,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("GÓC NHÌN TRẦN THUẬT (POV)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		ep.povSelect,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("BỐI CẢNH / ĐỊA ĐIỂM", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		ep.locationSelect,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("NHÂN VẬT XUẤT HIỆN TRONG CẢNH", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		ep.charactersCheck,
+	))
+
+	notesTabContent := container.NewBorder(
+		widget.NewLabelWithStyle("GHI CHÚ BÊN LỀ & NHÁP Ý TƯỞNG", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		nil, nil, nil,
+		ep.sideNotesEntry,
+	)
+
+	ep.inspectorTabs = container.NewAppTabs(
+		container.NewTabItem("Ngữ cảnh & Nhân vật", contextTabContent),
+		container.NewTabItem("Ghi chú bên lề", notesTabContent),
+	)
+
+	ep.splitContainer = container.NewHSplit(centerEditor, ep.inspectorTabs)
+	ep.splitContainer.Offset = 0.70
 }
 
-func (ep *EditorPanel) insertSnippet(snippet string) {
-	if ep.currentScene == nil {
-		return
-	}
-	ep.proseEntry.SetText(ep.proseEntry.Text + snippet)
+// Container trả về đối tượng CanvasObject gốc của khung soạn thảo.
+func (ep *EditorPanel) Container() fyne.CanvasObject {
+	return ep.splitContainer
 }
 
-// SetDistractionFree hides or reveals the right-hand Context & Side Notes inspector.
+// SetDistractionFree ẩn hoặc hiện thanh Ngữ cảnh & Ghi chú bên phải.
 func (ep *EditorPanel) SetDistractionFree(enabled bool) {
 	if enabled {
-		ep.inspectorBox.Hide()
-		ep.rootSplit.Offset = 1.0
+		ep.inspectorTabs.Hide()
+		ep.splitContainer.Offset = 1.0
 	} else {
-		ep.inspectorBox.Show()
-		ep.rootSplit.Offset = 0.70
+		ep.inspectorTabs.Show()
+		ep.splitContainer.Offset = 0.70
 	}
-	ep.rootSplit.Refresh()
+	ep.splitContainer.Refresh()
 }
 
-// ReloadMetadataOptions refreshes the available Characters and Locations for the active Project.
+// ReloadMetadataOptions tải lại danh sách Nhân vật và Địa điểm từ SQLite.
 func (ep *EditorPanel) ReloadMetadataOptions(projectID int64) {
-	ep.currentProjID = projectID
+	ep.projectID = projectID
 	chars, _ := ep.store.ListCharacters(projectID)
 	locs, _ := ep.store.ListLocations(projectID)
+
 	ep.characters = chars
 	ep.locations = locs
 
-	povOpts := []string{"(None)"}
+	povOpts := []string{noneOptionLabel}
 	charNames := make([]string, 0, len(chars))
 	for _, c := range chars {
 		povOpts = append(povOpts, c.Name)
 		charNames = append(charNames, c.Name)
 	}
 
-	locOpts := []string{"(None)"}
+	locOpts := []string{noneOptionLabel}
 	for _, l := range locs {
 		locOpts = append(locOpts, l.Name)
 	}
 
-	ep.suppressEvents = true
+	ep.loading = true
 	ep.povSelect.Options = povOpts
 	ep.povSelect.Refresh()
+
 	ep.locationSelect.Options = locOpts
 	ep.locationSelect.Refresh()
-	ep.charCheckGroup.Options = charNames
-	ep.charCheckGroup.Refresh()
-	ep.suppressEvents = false
+
+	ep.charactersCheck.Options = charNames
+	ep.charactersCheck.Refresh()
+	ep.loading = false
 }
 
-// LoadScene populates the editor and metadata widgets with the selected Scene from SQLite.
-func (ep *EditorPanel) LoadScene(projectID int64, sceneID int64) {
+// LoadScene nạp dữ liệu một Cảnh từ SQLite vào trình soạn thảo.
+func (ep *EditorPanel) LoadScene(sceneID int64, projectID int64) error {
 	ep.FlushPendingSave()
-	ep.ReloadMetadataOptions(projectID)
+
+	if ep.projectID != projectID {
+		ep.ReloadMetadataOptions(projectID)
+	}
 
 	sc, err := ep.store.GetScene(sceneID)
 	if err != nil {
-		return
+		return err
 	}
-	ep.currentScene = sc
 
-	ep.suppressEvents = true
-	ep.sceneTitleEntry.SetText(sc.Title)
+	ep.mu.Lock()
+	ep.loading = true
+	ep.activeScene = sc
+	ep.mu.Unlock()
+
+	ep.titleEntry.SetText(sc.Title)
+	ep.summaryEntry.SetText(sc.Summary)
+	ep.targetWordsEntry.SetText(fmt.Sprintf("%d", sc.TargetWords))
 	ep.proseEntry.SetText(sc.Content)
-	ep.richPreview.ParseMarkdown(sc.Content)
 	ep.sideNotesEntry.SetText(sc.SideNotes)
-	ep.statusSelect.SetSelected(string(sc.Status))
-	ep.targetWordEntry.SetText(fmt.Sprintf("%d", sc.TargetWords))
+	ep.statusSelect.SetSelected(string(NormalizeStatus(sc.Status)))
 
+	// Gán nhân vật POV
+	povName := noneOptionLabel
 	if sc.POVCharacterID != nil {
-		ep.povSelect.SetSelected(ep.findCharacterNameByID(*sc.POVCharacterID))
-	} else {
-		ep.povSelect.SetSelected("(None)")
+		povName = ep.findCharacterNameByID(*sc.POVCharacterID)
 	}
+	ep.povSelect.SetSelected(povName)
 
+	// Gán bối cảnh
+	locName := noneOptionLabel
 	if sc.LocationID != nil {
-		ep.locationSelect.SetSelected(ep.findLocationNameByID(*sc.LocationID))
-	} else {
-		ep.locationSelect.SetSelected("(None)")
+		locName = ep.findLocationNameByID(*sc.LocationID)
 	}
+	ep.locationSelect.SetSelected(locName)
 
-	var selectedChars []string
-	for _, cid := range sc.CharacterIDs {
-		name := ep.findCharacterNameByID(cid)
-		if name != "(None)" {
-			selectedChars = append(selectedChars, name)
+	// Gán các nhân vật có mặt trong cảnh
+	var selectedCharNames []string
+	for _, id := range sc.CharacterIDs {
+		name := ep.findCharacterNameByID(id)
+		if name != noneOptionLabel {
+			selectedCharNames = append(selectedCharNames, name)
 		}
 	}
-	ep.charCheckGroup.SetSelected(selectedChars)
-	ep.suppressEvents = false
+	ep.charactersCheck.SetSelected(selectedCharNames)
+
+	ep.mu.Lock()
+	ep.loading = false
+	ep.mu.Unlock()
 
 	ep.updateLiveWordCounts()
-	ep.saveStateLabel.SetText("Saved to SQLite")
+	ep.saveStateLabel.SetText("Đã đồng bộ với SQLite")
+	return nil
 }
 
-// scheduleAutoSave resets the 750ms debounce timer and persists changes when typing pauses.
-func (ep *EditorPanel) scheduleAutoSave() {
-	ep.saveMu.Lock()
-	defer ep.saveMu.Unlock()
+func (ep *EditorPanel) updateLiveWordCounts() {
+	ep.mu.Lock()
+	sc := ep.activeScene
+	ep.mu.Unlock()
+	if sc == nil {
+		return
+	}
 
-	ep.saveStateLabel.SetText("Unsaved edits...")
+	liveWords := CountWords(ep.proseEntry.Text)
+	target := sc.TargetWords
+	if _, err := fmt.Sscanf(ep.targetWordsEntry.Text, "%d", &target); err != nil || target <= 0 {
+		target = 1200
+	}
+
+	ep.sceneWordLabel.SetText(fmt.Sprintf("Cảnh: %d / %d từ", liveWords, target))
+	ratio := float64(liveWords) / float64(target)
+	if ratio > 1.0 {
+		ratio = 1.0
+	}
+	ep.sceneProgress.SetValue(ratio)
+
+	chWords, chTarget, err := ep.store.GetChapterWordProgress(sc.ChapterID)
+	if err == nil {
+		adjustedChWords := chWords - sc.WordCount + liveWords
+		if adjustedChWords < 0 {
+			adjustedChWords = liveWords
+		}
+		if chTarget <= 0 {
+			chTarget = 3000
+		}
+		ep.chapterWordLabel.SetText(fmt.Sprintf("Chương: %d / %d từ", adjustedChWords, chTarget))
+		chRatio := float64(adjustedChWords) / float64(chTarget)
+		if chRatio > 1.0 {
+			chRatio = 1.0
+		}
+		ep.chapterProgress.SetValue(chRatio)
+	}
+}
+
+func (ep *EditorPanel) scheduleAutoSave() {
+	ep.mu.Lock()
+	defer ep.mu.Unlock()
+
+	if ep.loading || ep.activeScene == nil {
+		return
+	}
+
+	ep.saveStateLabel.SetText("Đang chờ tự động lưu...")
 	if ep.saveTimer != nil {
 		ep.saveTimer.Stop()
 	}
-
 	ep.saveTimer = time.AfterFunc(750*time.Millisecond, func() {
 		ep.FlushPendingSave()
 	})
 }
 
-// FlushPendingSave immediately writes the active Scene to SQLite if a timer is active.
+// FlushPendingSave ghi ngay lập tức mọi thay đổi của Cảnh hiện tại xuống SQLite.
 func (ep *EditorPanel) FlushPendingSave() {
-	ep.saveMu.Lock()
+	ep.mu.Lock()
+	if ep.loading || ep.activeScene == nil {
+		ep.mu.Unlock()
+		return
+	}
 	if ep.saveTimer != nil {
 		ep.saveTimer.Stop()
 		ep.saveTimer = nil
 	}
-	sc := ep.currentScene
-	ep.saveMu.Unlock()
 
-	if sc == nil {
-		return
+	sc := *ep.activeScene
+	sc.Title = ep.titleEntry.Text
+	sc.Summary = ep.summaryEntry.Text
+	sc.Content = ep.proseEntry.Text
+	sc.SideNotes = ep.sideNotesEntry.Text
+	if ep.statusSelect.Selected != "" {
+		sc.Status = NormalizeStatus(SceneStatus(ep.statusSelect.Selected))
 	}
 
-	if err := ep.store.UpdateScene(sc); err == nil {
-		ep.saveStateLabel.SetText(fmt.Sprintf("Auto-saved %s", time.Now().Format("15:04:05")))
+	var target int
+	if _, err := fmt.Sscanf(ep.targetWordsEntry.Text, "%d", &target); err == nil && target > 0 {
+		sc.TargetWords = target
+	}
+
+	sc.POVCharacterID = ep.findCharacterIDByName(ep.povSelect.Selected)
+	sc.LocationID = ep.findLocationIDByName(ep.locationSelect.Selected)
+
+	var charIDs []int64
+	for _, name := range ep.charactersCheck.Selected {
+		if idPtr := ep.findCharacterIDByName(name); idPtr != nil {
+			charIDs = append(charIDs, *idPtr)
+		}
+	}
+	sc.CharacterIDs = charIDs
+	ep.mu.Unlock()
+
+	if err := ep.store.UpdateScene(&sc); err == nil {
+		ep.mu.Lock()
+		if ep.activeScene != nil && ep.activeScene.ID == sc.ID {
+			ep.activeScene.WordCount = sc.WordCount
+			ep.activeScene.TargetWords = sc.TargetWords
+		}
+		ep.mu.Unlock()
+
+		ep.saveStateLabel.SetText(fmt.Sprintf("Đã tự động lưu lúc %s", time.Now().Format("15:04:05")))
 		ep.updateLiveWordCounts()
 		if ep.onSaved != nil {
 			ep.onSaved()
@@ -360,40 +392,10 @@ func (ep *EditorPanel) FlushPendingSave() {
 	}
 }
 
-func (ep *EditorPanel) updateLiveWordCounts() {
-	if ep.currentScene == nil {
-		return
-	}
-	words := CountWords(ep.currentScene.Content)
-	ep.currentScene.WordCount = words
-
-	target := ep.currentScene.TargetWords
-	if target <= 0 {
-		target = 1200
-	}
-	ratio := float64(words) / float64(target)
-	if ratio > 1.0 {
-		ratio = 1.0
-	}
-	ep.sceneWordLabel.SetText(fmt.Sprintf("Scene: %d / %d words (%.0f%%)", words, target, ratio*100))
-	ep.sceneProgress.SetValue(ratio)
-
-	ch, chWords, err := ep.store.GetChapter(ep.currentScene.ChapterID)
-	if err == nil && ch != nil {
-		chTarget := ch.TargetWords
-		if chTarget <= 0 {
-			chTarget = 3000
-		}
-		chRatio := float64(chWords) / float64(chTarget)
-		if chRatio > 1.0 {
-			chRatio = 1.0
-		}
-		ep.chapterWordLabel.SetText(fmt.Sprintf("Chapter: %d / %d words (%.0f%%)", chWords, chTarget, chRatio*100))
-		ep.chapterProgress.SetValue(chRatio)
-	}
-}
-
 func (ep *EditorPanel) findCharacterIDByName(name string) *int64 {
+	if name == "" || name == noneOptionLabel {
+		return nil
+	}
 	for _, c := range ep.characters {
 		if c.Name == name {
 			id := c.ID
@@ -409,10 +411,13 @@ func (ep *EditorPanel) findCharacterNameByID(id int64) string {
 			return c.Name
 		}
 	}
-	return "(None)"
+	return noneOptionLabel
 }
 
 func (ep *EditorPanel) findLocationIDByName(name string) *int64 {
+	if name == "" || name == noneOptionLabel {
+		return nil
+	}
 	for _, l := range ep.locations {
 		if l.Name == name {
 			id := l.ID
@@ -428,5 +433,5 @@ func (ep *EditorPanel) findLocationNameByID(id int64) string {
 			return l.Name
 		}
 	}
-	return "(None)"
+	return noneOptionLabel
 }

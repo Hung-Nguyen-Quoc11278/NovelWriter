@@ -1,5 +1,5 @@
--- GoNovelist SQLite Database Schema
--- Enables foreign key constraints for cascading deletes across the hierarchy.
+-- Sơ đồ Cơ sở dữ liệu SQLite của GoNovelist
+-- Kích hoạt ràng buộc khóa ngoại (Foreign Keys) để tự động xóa dây chuyền (Cascade) theo cấu trúc phân cấp.
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS projects (
     author TEXT NOT NULL DEFAULT '',
     genre TEXT NOT NULL DEFAULT '',
     synopsis TEXT NOT NULL DEFAULT '',
-    target_words INTEGER NOT NULL DEFAULT 80000,
+    target_words INTEGER NOT NULL DEFAULT 50000,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS acts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
     title TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS chapters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     act_id INTEGER NOT NULL,
     title TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 1,
     target_words INTEGER NOT NULL DEFAULT 3000,
-    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (act_id) REFERENCES acts(id) ON DELETE CASCADE
 );
@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS characters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'Supporting',
-    bio TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'Nhân vật chính',
+    description TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
@@ -54,14 +54,15 @@ CREATE TABLE IF NOT EXISTS scenes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     chapter_id INTEGER NOT NULL,
     title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL DEFAULT '',
     side_notes TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'Idea' CHECK (status IN ('Idea', 'Drafting', 'Completed', 'Edited')),
+    status TEXT NOT NULL DEFAULT 'Ý tưởng',
     pov_character_id INTEGER NULL,
     location_id INTEGER NULL,
     target_words INTEGER NOT NULL DEFAULT 1200,
     word_count INTEGER NOT NULL DEFAULT 0,
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 1,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE,
     FOREIGN KEY (pov_character_id) REFERENCES characters(id) ON DELETE SET NULL,
@@ -76,6 +77,6 @@ CREATE TABLE IF NOT EXISTS scene_characters (
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_acts_project_sort ON acts(project_id, sort_order);
-CREATE INDEX IF NOT EXISTS idx_chapters_act_sort ON chapters(act_id, sort_order);
-CREATE INDEX IF NOT EXISTS idx_scenes_chapter_sort ON scenes(chapter_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_acts_project_pos ON acts(project_id, position);
+CREATE INDEX IF NOT EXISTS idx_chapters_act_pos ON chapters(act_id, position);
+CREATE INDEX IF NOT EXISTS idx_scenes_chapter_pos ON scenes(chapter_id, position);

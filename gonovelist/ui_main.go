@@ -13,56 +13,105 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// NovelistUI coordinates the main Fyne window, hierarchical tree sidebar, and scene editor.
+// NovelistUI điều phối bố cục cửa sổ chính, cây phân cấp Hồi/Chương/Cảnh và các hộp thoại.
 type NovelistUI struct {
-	app             fyne.App
-	window          fyne.Window
-	store           *Store
-	activeProject   Project
-	acts            []Act
-	childrenMap     map[string][]string
-	nodeLookup      map[string]TreeNode
-	selectedUID     string
-	distractionFree bool
+	app           fyne.App
+	window        fyne.Window
+	store         *Store
+	activeProject Project
 
-	// Widgets
-	projectSelect *widget.Select
-	tree          *widget.Tree
-	sidebarBox    *fyne.Container
-	mainSplit     *container.Split
-	editorPanel   *EditorPanel
-	statusFooter  *widget.Label
+	// Dữ liệu ánh xạ cho Fyne Tree
+	childrenMap map[string][]string
+	nodeMeta    map[string]HierarchyNode
+	selectedUID string
+
+	// Các thành phần giao diện
+	projectSelect   *widget.Select
+	tree            *widget.Tree
+	editorPanel     *EditorPanel
+	mainSplit       *container.Split
+	sidebarBox      *fyne.Container
+	distractionFree bool
+	statusFooter    *widget.Label
 }
 
-// NewNovelistUI constructs the complete desktop UI and binds it to the SQLite Store.
-func NewNovelistUI(a fyne.App, w fyne.Window, store *Store) (*NovelistUI, error) {
-	ui := &NovelistUI{
-		app:         a,
-		window:      w,
-		store:       store,
-		childrenMap: make(map[string][]string),
-		nodeLookup:  make(map[string]TreeNode),
-	}
-
+// NewNovelistUI khởi tạo toàn bộ giao diện người dùng tiếng Việt cho GoNovelist.
+func NewNovelistUI(app fyne.App, window fyne.Window, store *Store) (*NovelistUI, error) {
 	projects, err := store.ListProjects()
 	if err != nil || len(projects) == 0 {
-		return nil, fmt.Errorf("load projects: %w", err)
+		return nil, fmt.Errorf("không thể tải danh sách tác phẩm: %w", err)
 	}
-	ui.activeProject = projects[0]
 
-	ui.editorPanel = NewEditorPanel(store, w, func() {
+	ui := &NovelistUI{
+		app:           app,
+		window:        window,
+		store:         store,
+		activeProject: projects[0],
+		childrenMap:   make(map[string][]string),
+		nodeMeta:      make(map[string]HierarchyNode),
+	}
+
+	ui.editorPanel = NewEditorPanel(store, window, ui.activeProject.ID, func() {
 		ui.RefreshTreeData()
 	})
 
-	ui.buildLayout(projects)
+	ui.buildMainMenu()
+	content := ui.buildLayout(projects)
+	ui.window.SetContent(content)
+
 	ui.RefreshTreeData()
 	ui.selectFirstAvailableScene()
-
 	return ui, nil
 }
 
-func (ui *NovelistUI) buildLayout(projects []Project) {
-	// Top Toolbar & Project Switcher
+func (ui *NovelistUI) buildMainMenu() {
+	fileMenu := fyne.NewMenu("Tệp",
+		fyne.NewMenuItem("Tác phẩm mới...", func() {
+			ui.showNewProjectDialog()
+		}),
+		fyne.NewMenuItem("Tạo tác phẩm mẫu Tiếng Việt", func() {
+			proj, err := ui.store.SeedVietnameseSampleProject()
+			if err != nil {
+				dialog.ShowError(err, ui.window)
+				return
+			}
+			ui.reloadProjectSelector(*proj)
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Xuất bản thảo ra Markdown (.md)...", func() {
+			ui.exportManuscript("markdown")
+		}),
+		fyne.NewMenuItem("Xuất bản thảo ra HTML (.html)...", func() {
+			ui.exportManuscript("html")
+		}),
+	)
+
+	hierarchyMenu := fyne.NewMenu("Cấu trúc",
+		fyne.NewMenuItem("Thêm Hồi mới", func() { ui.showAddActDialog() }),
+		fyne.NewMenuItem("Thêm Chương mới", func() { ui.showAddChapterDialog() }),
+		fyne.NewMenuItem("Thêm Cảnh mới", func() { ui.showAddSceneDialog() }),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Đổi tên mục đang chọn", func() { ui.showRenameNodeDialog() }),
+		fyne.NewMenuItem("Di chuyển lên", func() { ui.moveSelectedNode(-1) }),
+		fyne.NewMenuItem("Di chuyển xuống", func() { ui.moveSelectedNode(1) }),
+		fyne.NewMenuItem("Xóa mục đang chọn", func() { ui.confirmDeleteNode() }),
+	)
+
+	worldMenu := fyne.NewMenu("Thế giới & Nhân vật",
+		fyne.NewMenuItem("Thêm Nhân vật mới...", func() { ui.showNewCharacterDialog() }),
+		fyne.NewMenuItem("Thêm Bối cảnh / Địa điểm mới...", func() { ui.showNewLocationDialog() }),
+	)
+
+	viewMenu := fyne.NewMenu("Chế độ xem",
+		fyne.NewMenuItem("Bật/Tắt Chế độ Tập trung (Ẩn thanh bên)", func() {
+			ui.ToggleDistractionFree()
+		}),
+	)
+
+	ui.window.SetMainMenu(fyne.NewMainMenu(fileMenu, hierarchyMenu, worldMenu, viewMenu))
+}
+
+func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 	projectNames := make([]string, len(projects))
 	for i, p := range projects {
 		projectNames[i] = p.Title
@@ -82,31 +131,38 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 		}
 	}
 
-	newProjBtn := widget.NewButtonWithIcon("New Book", theme.FolderNewIcon(), ui.showNewProjectDialog)
-	castBtn := widget.NewButtonWithIcon("Cast & Locations", theme.AccountIcon(), ui.showWorldbuildingDialog)
-	exportMDBtn := widget.NewButtonWithIcon("Export MD", theme.DocumentSaveIcon(), func() {
-		ui.exportManuscript("md")
+	// Thanh công cụ thao tác nhanh cho Hồi / Chương / Cảnh
+	addActBtn := widget.NewButtonWithIcon("Hồi", theme.ContentAddIcon(), func() {
+		ui.showAddActDialog()
 	})
-	exportHTMLBtn := widget.NewButtonWithIcon("Export HTML", theme.DownloadIcon(), func() {
-		ui.exportManuscript("html")
+	addChapBtn := widget.NewButtonWithIcon("Chương", theme.ContentAddIcon(), func() {
+		ui.showAddChapterDialog()
 	})
-	focusBtn := widget.NewButtonWithIcon("Distraction-Free", theme.VisibilityIcon(), func() {
-		ui.ToggleDistractionFree()
+	addSceneBtn := widget.NewButtonWithIcon("Cảnh", theme.ContentAddIcon(), func() {
+		ui.showAddSceneDialog()
 	})
 
-	topBar := container.NewHBox(
-		widget.NewLabelWithStyle("GoNovelist", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewSeparator(),
-		ui.projectSelect,
-		newProjBtn,
-		castBtn,
-		layout.NewSpacer(),
-		exportMDBtn,
-		exportHTMLBtn,
-		focusBtn,
-	)
+	renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
+		ui.showRenameNodeDialog()
+	})
+	renameBtn.Importance = widget.LowImportance
 
-	// Hierarchical widget.Tree for Act -> Chapter -> Scene
+	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() {
+		ui.moveSelectedNode(-1)
+	})
+	upBtn.Importance = widget.LowImportance
+
+	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
+		ui.moveSelectedNode(1)
+	})
+	downBtn.Importance = widget.LowImportance
+
+	deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+		ui.confirmDeleteNode()
+	})
+	deleteBtn.Importance = widget.DangerImportance
+
+	// Cây phân cấp widget.Tree cho Hồi -> Chương -> Cảnh
 	ui.tree = widget.NewTree(
 		func(uid widget.TreeNodeID) []widget.TreeNodeID {
 			return ui.childrenMap[uid]
@@ -115,139 +171,191 @@ func (ui *NovelistUI) buildLayout(projects []Project) {
 			if uid == "" {
 				return true
 			}
-			node, ok := ui.nodeLookup[uid]
+			node, ok := ui.nodeMeta[uid]
 			if !ok {
 				return false
 			}
-			return node.Kind == NodeAct || node.Kind == NodeChapter
+			return node.Kind == "act" || node.Kind == "chapter"
 		},
 		func(branch bool) fyne.CanvasObject {
-			title := widget.NewLabel("Node Title")
-			meta := widget.NewLabel("0w")
-			meta.TextStyle = fyne.TextStyle{Monospace: true}
-			return container.NewBorder(nil, nil, nil, meta, title)
+			title := widget.NewLabel("Tiêu đề mục")
+			title.Truncation = fyne.TextTruncateEllipsis
+			badge := widget.NewLabel("0 từ")
+			badge.TextStyle = fyne.TextStyle{Monospace: true}
+			return container.NewBorder(nil, nil, nil, badge, title)
 		},
 		func(uid widget.TreeNodeID, branch bool, obj fyne.CanvasObject) {
-			c := obj.(*fyne.Container)
-			titleLbl := c.Objects[0].(*widget.Label)
-			metaLbl := c.Objects[1].(*widget.Label)
-
-			node, ok := ui.nodeLookup[uid]
+			node, ok := ui.nodeMeta[uid]
 			if !ok {
 				return
 			}
-			switch node.Kind {
-			case NodeAct:
-				titleLbl.TextStyle = fyne.TextStyle{Bold: true}
-				metaLbl.SetText("ACT")
-			case NodeChapter:
-				titleLbl.TextStyle = fyne.TextStyle{Italic: true}
-				metaLbl.SetText(fmt.Sprintf("%dw", node.WordCount))
-			case NodeScene:
-				titleLbl.TextStyle = fyne.TextStyle{}
-				metaLbl.SetText(fmt.Sprintf("[%s] %dw", node.Status, node.WordCount))
+			box := obj.(*fyne.Container)
+			var titleLabel *widget.Label
+			var badgeLabel *widget.Label
+			for _, child := range box.Objects {
+				if lbl, ok := child.(*widget.Label); ok {
+					if lbl.TextStyle.Monospace {
+						badgeLabel = lbl
+					} else {
+						titleLabel = lbl
+					}
+				}
 			}
-			titleLbl.SetText(node.Title)
-			titleLbl.Refresh()
+			if titleLabel != nil {
+				switch node.Kind {
+				case "act":
+					titleLabel.SetText("📚 " + node.Title)
+					titleLabel.TextStyle = fyne.TextStyle{Bold: true}
+				case "chapter":
+					titleLabel.SetText("📖 " + node.Title)
+					titleLabel.TextStyle = fyne.TextStyle{Bold: false}
+				case "scene":
+					titleLabel.SetText("🎬 " + node.Title)
+					titleLabel.TextStyle = fyne.TextStyle{Italic: false}
+				}
+				titleLabel.Refresh()
+			}
+			if badgeLabel != nil {
+				if node.Kind == "scene" {
+					badgeLabel.SetText(fmt.Sprintf("[%s] %dw", node.Status, node.WordCount))
+				} else {
+					badgeLabel.SetText(fmt.Sprintf("%dw", node.WordCount))
+				}
+			}
 		},
 	)
 
 	ui.tree.OnSelected = func(uid widget.TreeNodeID) {
 		ui.selectedUID = uid
-		node, ok := ui.nodeLookup[uid]
+		node, ok := ui.nodeMeta[uid]
 		if !ok {
 			return
 		}
-		if node.Kind == NodeScene {
-			ui.editorPanel.LoadScene(ui.activeProject.ID, node.ID)
+		if node.Kind == "scene" {
+			_ = ui.editorPanel.LoadScene(node.DatabaseID, ui.activeProject.ID)
 		}
 	}
 
-	// Sidebar Node CRUD + Reorder Action Bar
-	addActBtn := widget.NewButton("+ Act", ui.promptAddAct)
-	addChapBtn := widget.NewButton("+ Ch", ui.promptAddChapter)
-	addSceneBtn := widget.NewButton("+ Scene", ui.promptAddScene)
-	renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), ui.promptRenameNode)
-	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() { ui.moveSelectedNode(-1) })
-	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() { ui.moveSelectedNode(1) })
-	delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), ui.promptDeleteNode)
+	ui.statusFooter = widget.NewLabel("Tổng số từ: 0")
 
-	treeToolbar := container.NewVBox(
+	topSidebarControls := container.NewVBox(
+		widget.NewLabelWithStyle("TÁC PHẨM ĐANG MỞ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		ui.projectSelect,
+		widget.NewSeparator(),
 		container.NewGridWithColumns(3, addActBtn, addChapBtn, addSceneBtn),
-		container.NewGridWithColumns(4, renameBtn, upBtn, downBtn, delBtn),
+		container.NewHBox(
+			widget.NewLabel("Thao tác:"),
+			layout.NewSpacer(),
+			renameBtn,
+			upBtn,
+			downBtn,
+			deleteBtn,
+		),
 		widget.NewSeparator(),
 	)
 
-	ui.statusFooter = widget.NewLabel("Manuscript Ready")
-	ui.sidebarBox = container.NewBorder(treeToolbar, ui.statusFooter, nil, nil, ui.tree)
+	ui.sidebarBox = container.NewBorder(
+		topSidebarControls,
+		container.NewVBox(widget.NewSeparator(), ui.statusFooter),
+		nil,
+		nil,
+		ui.tree,
+	)
 
 	ui.mainSplit = container.NewHSplit(ui.sidebarBox, ui.editorPanel.Container())
 	ui.mainSplit.Offset = 0.24
-
-	root := container.NewBorder(
-		container.NewVBox(topBar, widget.NewSeparator()),
-		nil, nil, nil,
-		ui.mainSplit,
-	)
-	ui.window.SetContent(root)
+	return ui.mainSplit
 }
 
-// RefreshTreeData reloads the SQLite hierarchy into Fyne's Tree lookup maps.
+func (ui *NovelistUI) reloadProjectSelector(active Project) {
+	all, _ := ui.store.ListProjects()
+	names := make([]string, len(all))
+	for i, p := range all {
+		names[i] = p.Title
+	}
+	ui.activeProject = active
+	ui.projectSelect.Options = names
+	ui.projectSelect.SetSelected(active.Title)
+	ui.projectSelect.Refresh()
+	ui.RefreshTreeData()
+	ui.selectFirstAvailableScene()
+}
+
+// ToggleDistractionFree bật hoặc tắt chế độ viết tập trung (ẩn cây thư mục và bảng siêu dữ liệu).
+func (ui *NovelistUI) ToggleDistractionFree() {
+	ui.distractionFree = !ui.distractionFree
+	if ui.distractionFree {
+		ui.sidebarBox.Hide()
+		ui.editorPanel.SetDistractionFree(true)
+		ui.mainSplit.Offset = 0.0
+	} else {
+		ui.sidebarBox.Show()
+		ui.editorPanel.SetDistractionFree(false)
+		ui.mainSplit.Offset = 0.24
+	}
+	ui.mainSplit.Refresh()
+}
+
+// RefreshTreeData tải lại toàn bộ cấu trúc Hồi -> Chương -> Cảnh từ SQLite và tính tổng số từ.
 func (ui *NovelistUI) RefreshTreeData() {
-	acts, err := ui.store.LoadHierarchy(ui.activeProject.ID)
+	ui.childrenMap = make(map[string][]string)
+	ui.nodeMeta = make(map[string]HierarchyNode)
+
+	acts, err := ui.store.ListActs(ui.activeProject.ID)
 	if err != nil {
 		return
 	}
-	ui.acts = acts
-	ui.childrenMap = make(map[string][]string)
-	ui.nodeLookup = make(map[string]TreeNode)
 
 	totalManuscriptWords := 0
-	for _, a := range acts {
-		actUID := MakeUID(NodeAct, a.ID)
+
+	for _, act := range acts {
+		actUID := MakeNodeUID("act", act.ID)
 		ui.childrenMap[""] = append(ui.childrenMap[""], actUID)
+
+		chapters, _ := ui.store.ListChapters(act.ID)
 		actWords := 0
 
-		for _, c := range a.Chapters {
-			chUID := MakeUID(NodeChapter, c.ID)
+		for _, ch := range chapters {
+			chUID := MakeNodeUID("chapter", ch.ID)
 			ui.childrenMap[actUID] = append(ui.childrenMap[actUID], chUID)
-			chWords := 0
 
-			for _, s := range c.Scenes {
-				scUID := MakeUID(NodeScene, s.ID)
+			scenes, _ := ui.store.ListScenes(ch.ID)
+			chWords := 0
+			for _, sc := range scenes {
+				scUID := MakeNodeUID("scene", sc.ID)
 				ui.childrenMap[chUID] = append(ui.childrenMap[chUID], scUID)
-				ui.nodeLookup[scUID] = TreeNode{
-					UID:       scUID,
-					Kind:      NodeScene,
-					ID:        s.ID,
-					ParentID:  c.ID,
-					Title:     s.Title,
-					Status:    s.Status,
-					WordCount: s.WordCount,
-					Target:    s.TargetWords,
+				ui.nodeMeta[scUID] = HierarchyNode{
+					UID:         scUID,
+					Kind:        "scene",
+					DatabaseID:  sc.ID,
+					ParentID:    ch.ID,
+					Title:       sc.Title,
+					WordCount:   sc.WordCount,
+					TargetWords: sc.TargetWords,
+					Status:      sc.Status,
 				}
-				chWords += s.WordCount
+				chWords += sc.WordCount
 			}
 
-			ui.nodeLookup[chUID] = TreeNode{
-				UID:       chUID,
-				Kind:      NodeChapter,
-				ID:        c.ID,
-				ParentID:  a.ID,
-				Title:     c.Title,
-				WordCount: chWords,
-				Target:    c.TargetWords,
+			ui.nodeMeta[chUID] = HierarchyNode{
+				UID:         chUID,
+				Kind:        "chapter",
+				DatabaseID:  ch.ID,
+				ParentID:    act.ID,
+				Title:       ch.Title,
+				WordCount:   chWords,
+				TargetWords: ch.TargetWords,
 			}
 			actWords += chWords
 		}
 
-		ui.nodeLookup[actUID] = TreeNode{
-			UID:       actUID,
-			Kind:      NodeAct,
-			ID:        a.ID,
-			ParentID:  ui.activeProject.ID,
-			Title:     a.Title,
-			WordCount: actWords,
+		ui.nodeMeta[actUID] = HierarchyNode{
+			UID:        actUID,
+			Kind:       "act",
+			DatabaseID: act.ID,
+			ParentID:   ui.activeProject.ID,
+			Title:      act.Title,
+			WordCount:  actWords,
 		}
 		totalManuscriptWords += actWords
 	}
@@ -257,306 +365,312 @@ func (ui *NovelistUI) RefreshTreeData() {
 		ui.tree.OpenAllBranches()
 	}
 	if ui.statusFooter != nil {
-		ui.statusFooter.SetText(fmt.Sprintf("Total: %d / %d words", totalManuscriptWords, ui.activeProject.TargetWords))
+		ui.statusFooter.SetText(fmt.Sprintf("Tổng cộng: %d / %d từ", totalManuscriptWords, ui.activeProject.TargetWords))
 	}
 }
 
 func (ui *NovelistUI) selectFirstAvailableScene() {
-	for _, a := range ui.acts {
-		for _, c := range a.Chapters {
-			if len(c.Scenes) > 0 {
-				uid := MakeUID(NodeScene, c.Scenes[0].ID)
-				ui.tree.Select(uid)
+	for _, actUID := range ui.childrenMap[""] {
+		for _, chUID := range ui.childrenMap[actUID] {
+			scenes := ui.childrenMap[chUID]
+			if len(scenes) > 0 {
+				ui.tree.Select(scenes[0])
 				return
 			}
 		}
 	}
 }
 
-// ToggleDistractionFree collapses or restores the left hierarchy tree and right metadata drawer.
-func (ui *NovelistUI) ToggleDistractionFree() {
-	ui.distractionFree = !ui.distractionFree
-	if ui.distractionFree {
-		ui.sidebarBox.Hide()
-		ui.mainSplit.Offset = 0.0
-	} else {
-		ui.sidebarBox.Show()
-		ui.mainSplit.Offset = 0.24
-	}
-	ui.editorPanel.SetDistractionFree(ui.distractionFree)
-	ui.mainSplit.Refresh()
-}
-
-func (ui *NovelistUI) promptAddAct() {
-	entry := widget.NewEntry()
-	entry.SetPlaceHolder("e.g., Act III: The Meridian Breach")
-	dialog.ShowForm("Create New Act", "Create", "Cancel",
-		[]*widget.FormItem{widget.NewFormItem("Act Title", entry)},
-		func(ok bool) {
-			if !ok || entry.Text == "" {
-				return
-			}
-			act, err := ui.store.CreateAct(ui.activeProject.ID, entry.Text)
-			if err == nil {
-				ui.RefreshTreeData()
-				ui.tree.Select(MakeUID(NodeAct, act.ID))
-			}
-		}, ui.window)
-}
-
-func (ui *NovelistUI) promptAddChapter() {
-	var targetActID int64
-	if node, ok := ui.nodeLookup[ui.selectedUID]; ok {
+// Các phương thức hỗ trợ xác định nút cha khi thêm Chương hoặc Cảnh
+func (ui *NovelistUI) resolveTargetActID() (int64, error) {
+	if node, ok := ui.nodeMeta[ui.selectedUID]; ok {
 		switch node.Kind {
-		case NodeAct:
-			targetActID = node.ID
-		case NodeChapter:
-			targetActID = node.ParentID
-		case NodeScene:
-			if chNode, ok := ui.nodeLookup[MakeUID(NodeChapter, node.ParentID)]; ok {
-				targetActID = chNode.ParentID
+		case "act":
+			return node.DatabaseID, nil
+		case "chapter":
+			return node.ParentID, nil
+		case "scene":
+			chUID := MakeNodeUID("chapter", node.ParentID)
+			if chNode, exists := ui.nodeMeta[chUID]; exists {
+				return chNode.ParentID, nil
 			}
 		}
 	}
-	if targetActID == 0 && len(ui.acts) > 0 {
-		targetActID = ui.acts[len(ui.acts)-1].ID
+	acts, err := ui.store.ListActs(ui.activeProject.ID)
+	if err != nil || len(acts) == 0 {
+		return 0, fmt.Errorf("vui lòng tạo ít nhất một Hồi trước")
 	}
-	if targetActID == 0 {
-		dialog.ShowInformation("No Act Available", "Please create an Act first.", ui.window)
-		return
-	}
-
-	titleEntry := widget.NewEntry()
-	titleEntry.SetPlaceHolder("e.g., Chapter 4: The Sounding Line")
-	targetEntry := widget.NewEntry()
-	targetEntry.SetText("3000")
-
-	dialog.ShowForm("Create New Chapter", "Create", "Cancel",
-		[]*widget.FormItem{
-			widget.NewFormItem("Chapter Title", titleEntry),
-			widget.NewFormItem("Target Words", targetEntry),
-		},
-		func(ok bool) {
-			if !ok || titleEntry.Text == "" {
-				return
-			}
-			var target int
-			_, _ = fmt.Sscanf(targetEntry.Text, "%d", &target)
-			ch, err := ui.store.CreateChapter(targetActID, titleEntry.Text, target)
-			if err == nil {
-				ui.RefreshTreeData()
-				ui.tree.Select(MakeUID(NodeChapter, ch.ID))
-			}
-		}, ui.window)
+	return acts[len(acts)-1].ID, nil
 }
 
-func (ui *NovelistUI) promptAddScene() {
-	var targetChapterID int64
-	if node, ok := ui.nodeLookup[ui.selectedUID]; ok {
+func (ui *NovelistUI) resolveTargetChapterID() (int64, error) {
+	if node, ok := ui.nodeMeta[ui.selectedUID]; ok {
 		switch node.Kind {
-		case NodeChapter:
-			targetChapterID = node.ID
-		case NodeScene:
-			targetChapterID = node.ParentID
-		case NodeAct:
-			for _, a := range ui.acts {
-				if a.ID == node.ID && len(a.Chapters) > 0 {
-					targetChapterID = a.Chapters[len(a.Chapters)-1].ID
+		case "chapter":
+			return node.DatabaseID, nil
+		case "scene":
+			return node.ParentID, nil
+		case "act":
+			chUIDs := ui.childrenMap[node.UID]
+			if len(chUIDs) > 0 {
+				if chNode, exists := ui.nodeMeta[chUIDs[len(chUIDs)-1]]; exists {
+					return chNode.DatabaseID, nil
 				}
 			}
 		}
 	}
-	if targetChapterID == 0 {
-		dialog.ShowInformation("Select a Chapter", "Please select a Chapter or Scene first.", ui.window)
+	acts, _ := ui.store.ListActs(ui.activeProject.ID)
+	for _, a := range acts {
+		chaps, _ := ui.store.ListChapters(a.ID)
+		if len(chaps) > 0 {
+			return chaps[len(chaps)-1].ID, nil
+		}
+	}
+	return 0, fmt.Errorf("vui lòng tạo ít nhất một Chương trước")
+}
+
+// Các hộp thoại thêm / sửa / xóa Hồi, Chương, Cảnh, Nhân vật, Bối cảnh
+
+func (ui *NovelistUI) showNewProjectDialog() {
+	titleEntry := widget.NewEntry()
+	titleEntry.SetPlaceHolder("VD: Mùa Gió Chướng Trên Đỉnh Ngự Bình")
+	authorEntry := widget.NewEntry()
+	authorEntry.SetPlaceHolder("Tên tác giả")
+	genreEntry := widget.NewEntry()
+	genreEntry.SetPlaceHolder("Tiểu thuyết lịch sử / Văn học đương đại...")
+
+	dialog.ShowForm("Khởi tạo Tác phẩm Mới", "Tạo tác phẩm", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tên tác phẩm", titleEntry),
+		widget.NewFormItem("Tác giả", authorEntry),
+		widget.NewFormItem("Thể loại", genreEntry),
+	}, func(ok bool) {
+		if !ok || titleEntry.Text == "" {
+			return
+		}
+		proj, err := ui.store.CreateProject(titleEntry.Text, authorEntry.Text, genreEntry.Text, "", 50000)
+		if err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		act, _ := ui.store.CreateAct(proj.ID, "Hồi I — Khởi Đầu")
+		ch, _ := ui.store.CreateChapter(act.ID, "Chương 1", 3000)
+		_, _ = ui.store.CreateScene(ch.ID, "Cảnh 1: Mở đầu", 1200)
+
+		ui.reloadProjectSelector(*proj)
+	}, ui.window)
+}
+
+func (ui *NovelistUI) showAddActDialog() {
+	entry := widget.NewEntry()
+	entry.SetPlaceHolder("VD: Hồi III — Ngày Trở Về")
+	dialog.ShowForm("Thêm Hồi Mới", "Tạo Hồi", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tiêu đề Hồi", entry),
+	}, func(ok bool) {
+		if !ok || entry.Text == "" {
+			return
+		}
+		if _, err := ui.store.CreateAct(ui.activeProject.ID, entry.Text); err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		ui.RefreshTreeData()
+	}, ui.window)
+}
+
+func (ui *NovelistUI) showAddChapterDialog() {
+	actID, err := ui.resolveTargetActID()
+	if err != nil {
+		dialog.ShowError(err, ui.window)
 		return
 	}
-
 	titleEntry := widget.NewEntry()
-	titleEntry.SetPlaceHolder("e.g., Scene 2: Crossing the Causeway")
+	titleEntry.SetPlaceHolder("VD: Chương 4: Bến Đò Đêm Mưa")
+	targetEntry := widget.NewEntry()
+	targetEntry.SetText("3000")
+
+	dialog.ShowForm("Thêm Chương Mới", "Tạo Chương", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tiêu đề Chương", titleEntry),
+		widget.NewFormItem("Mục tiêu số từ", targetEntry),
+	}, func(ok bool) {
+		if !ok || titleEntry.Text == "" {
+			return
+		}
+		var target int
+		_, _ = fmt.Sscanf(targetEntry.Text, "%d", &target)
+		if _, err := ui.store.CreateChapter(actID, titleEntry.Text, target); err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		ui.RefreshTreeData()
+	}, ui.window)
+}
+
+func (ui *NovelistUI) showAddSceneDialog() {
+	chID, err := ui.resolveTargetChapterID()
+	if err != nil {
+		dialog.ShowError(err, ui.window)
+		return
+	}
+	titleEntry := widget.NewEntry()
+	titleEntry.SetPlaceHolder("VD: Cảnh 2: Cuộc Gặp Dưới Hiên Trà")
 	targetEntry := widget.NewEntry()
 	targetEntry.SetText("1200")
 
-	dialog.ShowForm("Create New Scene", "Create", "Cancel",
-		[]*widget.FormItem{
-			widget.NewFormItem("Scene Title", titleEntry),
-			widget.NewFormItem("Target Words", targetEntry),
-		},
-		func(ok bool) {
-			if !ok || titleEntry.Text == "" {
-				return
-			}
-			var target int
-			_, _ = fmt.Sscanf(targetEntry.Text, "%d", &target)
-			sc, err := ui.store.CreateScene(targetChapterID, titleEntry.Text, target)
-			if err == nil {
-				ui.RefreshTreeData()
-				uid := MakeUID(NodeScene, sc.ID)
-				ui.tree.Select(uid)
-				ui.editorPanel.LoadScene(ui.activeProject.ID, sc.ID)
-			}
-		}, ui.window)
+	dialog.ShowForm("Thêm Cảnh Mới", "Tạo Cảnh", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tiêu đề Cảnh", titleEntry),
+		widget.NewFormItem("Mục tiêu số từ", targetEntry),
+	}, func(ok bool) {
+		if !ok || titleEntry.Text == "" {
+			return
+		}
+		var target int
+		_, _ = fmt.Sscanf(targetEntry.Text, "%d", &target)
+		sc, err := ui.store.CreateScene(chID, titleEntry.Text, target)
+		if err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		ui.RefreshTreeData()
+		ui.tree.Select(MakeNodeUID("scene", sc.ID))
+	}, ui.window)
 }
 
-func (ui *NovelistUI) promptRenameNode() {
-	node, ok := ui.nodeLookup[ui.selectedUID]
+func (ui *NovelistUI) showRenameNodeDialog() {
+	node, ok := ui.nodeMeta[ui.selectedUID]
 	if !ok {
 		return
 	}
 	entry := widget.NewEntry()
 	entry.SetText(node.Title)
 
-	dialog.ShowForm("Rename Item", "Save", "Cancel",
-		[]*widget.FormItem{widget.NewFormItem("Title", entry)},
-		func(confirmed bool) {
-			if !confirmed || entry.Text == "" {
-				return
-			}
-			switch node.Kind {
-			case NodeAct:
-				_ = ui.store.RenameAct(node.ID, entry.Text)
-			case NodeChapter:
-				_ = ui.store.UpdateChapter(node.ID, entry.Text, node.Target)
-			case NodeScene:
-				sc, err := ui.store.GetScene(node.ID)
-				if err == nil {
-					sc.Title = entry.Text
-					_ = ui.store.UpdateScene(sc)
-					ui.editorPanel.LoadScene(ui.activeProject.ID, sc.ID)
-				}
-			}
-			ui.RefreshTreeData()
-		}, ui.window)
+	dialog.ShowForm("Đổi Tên Mục", "Lưu thay đổi", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tiêu đề mới", entry),
+	}, func(confirmed bool) {
+		if !confirmed || entry.Text == "" {
+			return
+		}
+		var err error
+		switch node.Kind {
+		case "act":
+			err = ui.store.RenameAct(node.DatabaseID, entry.Text)
+		case "chapter":
+			err = ui.store.RenameChapter(node.DatabaseID, entry.Text)
+		case "scene":
+			err = ui.store.RenameScene(node.DatabaseID, entry.Text)
+			_ = ui.editorPanel.LoadScene(node.DatabaseID, ui.activeProject.ID)
+		}
+		if err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		ui.RefreshTreeData()
+	}, ui.window)
 }
 
 func (ui *NovelistUI) moveSelectedNode(direction int) {
-	node, ok := ui.nodeLookup[ui.selectedUID]
+	node, ok := ui.nodeMeta[ui.selectedUID]
 	if !ok {
 		return
 	}
+	var err error
 	switch node.Kind {
-	case NodeAct:
-		_ = ui.store.MoveAct(node.ID, direction)
-	case NodeChapter:
-		_ = ui.store.MoveChapter(node.ID, direction)
-	case NodeScene:
-		_ = ui.store.MoveScene(node.ID, direction)
+	case "act":
+		err = ui.store.MoveAct(node.DatabaseID, direction)
+	case "chapter":
+		err = ui.store.MoveChapter(node.DatabaseID, direction)
+	case "scene":
+		err = ui.store.MoveScene(node.DatabaseID, direction)
+	}
+	if err != nil {
+		dialog.ShowError(err, ui.window)
+		return
 	}
 	ui.RefreshTreeData()
 }
 
-func (ui *NovelistUI) promptDeleteNode() {
-	node, ok := ui.nodeLookup[ui.selectedUID]
+func (ui *NovelistUI) confirmDeleteNode() {
+	node, ok := ui.nodeMeta[ui.selectedUID]
 	if !ok {
 		return
 	}
-	dialog.ShowConfirm("Confirm Deletion",
-		fmt.Sprintf("Delete '%s' and any nested items permanently?", node.Title),
+	dialog.ShowConfirm(
+		"Xác nhận xóa",
+		fmt.Sprintf("Bạn có chắc chắn muốn xóa %q và toàn bộ các mục con bên trong?", node.Title),
 		func(confirmed bool) {
 			if !confirmed {
 				return
 			}
+			var err error
 			switch node.Kind {
-			case NodeAct:
-				_ = ui.store.DeleteAct(node.ID)
-			case NodeChapter:
-				_ = ui.store.DeleteChapter(node.ID)
-			case NodeScene:
-				_ = ui.store.DeleteScene(node.ID)
+			case "act":
+				err = ui.store.DeleteAct(node.DatabaseID)
+			case "chapter":
+				err = ui.store.DeleteChapter(node.DatabaseID)
+			case "scene":
+				err = ui.store.DeleteScene(node.DatabaseID)
+			}
+			if err != nil {
+				dialog.ShowError(err, ui.window)
+				return
 			}
 			ui.selectedUID = ""
 			ui.RefreshTreeData()
 			ui.selectFirstAvailableScene()
-		}, ui.window)
-}
-
-func (ui *NovelistUI) showNewProjectDialog() {
-	titleEntry := widget.NewEntry()
-	authorEntry := widget.NewEntry()
-	genreEntry := widget.NewEntry()
-	targetEntry := widget.NewEntry()
-	targetEntry.SetText("80000")
-
-	dialog.ShowForm("New Novel Project", "Create", "Cancel",
-		[]*widget.FormItem{
-			widget.NewFormItem("Book Title", titleEntry),
-			widget.NewFormItem("Author", authorEntry),
-			widget.NewFormItem("Genre", genreEntry),
-			widget.NewFormItem("Target Word Count", targetEntry),
 		},
-		func(ok bool) {
-			if !ok || titleEntry.Text == "" {
-				return
-			}
-			var target int
-			_, _ = fmt.Sscanf(targetEntry.Text, "%d", &target)
-			proj, err := ui.store.CreateProject(titleEntry.Text, authorEntry.Text, genreEntry.Text, target)
-			if err != nil {
-				return
-			}
-			act, _ := ui.store.CreateAct(proj.ID, "Act I: Opening")
-			ch, _ := ui.store.CreateChapter(act.ID, "Chapter 1", 3000)
-			_, _ = ui.store.CreateScene(ch.ID, "Scene 1", 1200)
-
-			projects, _ := ui.store.ListProjects()
-			names := make([]string, len(projects))
-			for i, p := range projects {
-				names[i] = p.Title
-			}
-			ui.projectSelect.Options = names
-			ui.activeProject = *proj
-			ui.projectSelect.SetSelected(proj.Title)
-			ui.RefreshTreeData()
-			ui.selectFirstAvailableScene()
-		}, ui.window)
+		ui.window,
+	)
 }
 
-func (ui *NovelistUI) showWorldbuildingDialog() {
-	charName := widget.NewEntry()
-	charName.SetPlaceHolder("Character Name")
-	charRole := widget.NewSelect([]string{"Protagonist", "Deuteragonist", "Antagonist", "Supporting"}, nil)
-	charRole.SetSelected("Supporting")
-	charBio := widget.NewEntry()
-	charBio.SetPlaceHolder("Brief character notes")
+func (ui *NovelistUI) showNewCharacterDialog() {
+	nameEntry := widget.NewEntry()
+	nameEntry.SetPlaceHolder("Họ và tên nhân vật")
+	roleEntry := widget.NewEntry()
+	roleEntry.SetPlaceHolder("Nhân vật chính / Phản diện / Đồng hành")
+	descEntry := widget.NewMultiLineEntry()
+	descEntry.SetPlaceHolder("Ngoại hình, tính cách, động cơ, quá khứ...")
 
-	locName := widget.NewEntry()
-	locName.SetPlaceHolder("Location / Setting Name")
-	locDesc := widget.NewEntry()
-	locDesc.SetPlaceHolder("Atmospheric details")
-
-	addCharBtn := widget.NewButton("Add Character", func() {
-		if charName.Text == "" {
+	dialog.ShowForm("Thêm Nhân Vật Mới", "Lưu Nhân vật", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tên nhân vật", nameEntry),
+		widget.NewFormItem("Vai trò", roleEntry),
+		widget.NewFormItem("Tiểu sử & Đặc điểm", descEntry),
+	}, func(ok bool) {
+		if !ok || nameEntry.Text == "" {
 			return
 		}
-		_, _ = ui.store.CreateCharacter(ui.activeProject.ID, charName.Text, charRole.Selected, charBio.Text)
-		charName.SetText("")
-		charBio.SetText("")
-		ui.editorPanel.ReloadMetadataOptions(ui.activeProject.ID)
-	})
-
-	addLocBtn := widget.NewButton("Add Location", func() {
-		if locName.Text == "" {
+		_, err := ui.store.CreateCharacter(ui.activeProject.ID, nameEntry.Text, roleEntry.Text, descEntry.Text)
+		if err != nil {
+			dialog.ShowError(err, ui.window)
 			return
 		}
-		_, _ = ui.store.CreateLocation(ui.activeProject.ID, locName.Text, locDesc.Text)
-		locName.SetText("")
-		locDesc.SetText("")
 		ui.editorPanel.ReloadMetadataOptions(ui.activeProject.ID)
-	})
+	}, ui.window)
+}
 
-	content := container.NewVBox(
-		widget.NewLabelWithStyle("Add Cast Character", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		charName, charRole, charBio, addCharBtn,
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Add World Location", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		locName, locDesc, addLocBtn,
-	)
+func (ui *NovelistUI) showNewLocationDialog() {
+	nameEntry := widget.NewEntry()
+	nameEntry.SetPlaceHolder("Tên bối cảnh / địa điểm")
+	descEntry := widget.NewMultiLineEntry()
+	descEntry.SetPlaceHolder("Không khí, kiến trúc, âm thanh, chi tiết giác quan...")
 
-	d := dialog.NewCustom("Cast & Worldbuilding Registry", "Done", content, ui.window)
-	d.Resize(fyne.NewSize(440, 420))
-	d.Show()
+	dialog.ShowForm("Thêm Bối Cảnh / Địa Điểm", "Lưu Bối cảnh", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tên địa điểm", nameEntry),
+		widget.NewFormItem("Mô tả chi tiết", descEntry),
+	}, func(ok bool) {
+		if !ok || nameEntry.Text == "" {
+			return
+		}
+		_, err := ui.store.CreateLocation(ui.activeProject.ID, nameEntry.Text, descEntry.Text)
+		if err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		ui.editorPanel.ReloadMetadataOptions(ui.activeProject.ID)
+	}, ui.window)
 }
 
 func (ui *NovelistUI) exportManuscript(format string) {
+	ui.editorPanel.FlushPendingSave()
+
 	var compiled string
 	var err error
 	ext := ".md"
@@ -571,12 +685,12 @@ func (ui *NovelistUI) exportManuscript(format string) {
 		return
 	}
 
-	outName := filepath.Clean(ui.activeProject.Title) + "_manuscript" + ext
+	outName := filepath.Clean(ui.activeProject.Title) + "_ban_thao" + ext
 	if err := os.WriteFile(outName, []byte(compiled), 0644); err != nil {
 		dialog.ShowError(err, ui.window)
 		return
 	}
-	dialog.ShowInformation("Manuscript Exported",
-		fmt.Sprintf("Compiled sequential Acts, Chapters, and Scenes to:\n%s", outName),
+	dialog.ShowInformation("Xuất bản thảo thành công",
+		fmt.Sprintf("Đã biên dịch tuần tự toàn bộ Hồi, Chương và Cảnh ra tệp:\n%s", outName),
 		ui.window)
 }

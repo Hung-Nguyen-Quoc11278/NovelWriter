@@ -24,10 +24,12 @@ import {
   Act,
   Chapter,
   Character,
+  Location,
   Project,
   Scene,
   SceneStatus,
   countWords,
+  normalizeStatus,
 } from './types/novelist';
 import { INITIAL_PROJECTS } from './data/initialNovelData';
 import { WorldCastView } from './components/WorldCastView';
@@ -36,7 +38,7 @@ import { GoSourceExplorer } from './components/GoSourceExplorer';
 
 type NavTab = 'studio' | 'world' | 'export' | 'go-source' | 'architecture';
 
-const STORAGE_KEY = 'gonovelist_sqlite_mirror_v1';
+const STORAGE_KEY = 'gonovelist_sqlite_vi_v3';
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>(() => {
@@ -49,7 +51,7 @@ export default function App() {
         }
       }
     } catch {
-      // Fallback to initial seed
+      // Dùng dữ liệu mẫu mặc định
     }
     return INITIAL_PROJECTS;
   });
@@ -65,14 +67,14 @@ export default function App() {
     [projects, activeProjectId]
   );
 
-  // Selected scene ID
+  // ID Cảnh đang chọn
   const [selectedSceneId, setSelectedSceneId] = useState<number>(() => {
     const firstScene =
       activeProject?.acts[0]?.chapters[0]?.scenes[0]?.id || 1111;
     return firstScene;
   });
 
-  // Tree expansion state
+  // Trạng thái đóng/mở nhánh cây
   const [collapsedActs, setCollapsedActs] = useState<Record<number, boolean>>(
     {}
   );
@@ -81,40 +83,40 @@ export default function App() {
   >({});
   const [treeSearch, setTreeSearch] = useState('');
 
-  // Inline rename modal/input state
+  // Đổi tên trực tiếp
   const [renamingNode, setRenamingNode] = useState<{
     kind: 'act' | 'chapter' | 'scene';
     id: number;
     title: string;
   } | null>(null);
 
-  // New book inline creator
+  // Tạo tác phẩm mới
   const [showNewBookForm, setShowNewBookForm] = useState(false);
   const [newBookTitle, setNewBookTitle] = useState('');
   const [newBookAuthor, setNewBookAuthor] = useState('');
 
-  // Editor state & 750ms Debounced Auto-Save Engine
+  // Trạng thái trình soạn thảo & Bộ tự động lưu trễ 750ms
   const [editorMode, setEditorMode] = useState<'write' | 'preview'>('write');
   const [inspectorTab, setInspectorTab] = useState<'context' | 'notes'>(
     'context'
   );
   const [saveStatus, setSaveStatus] = useState<'saved' | 'pending'>('saved');
   const [lastSavedClock, setLastSavedClock] = useState<string>(() =>
-    new Date().toLocaleTimeString([], {
+    new Date().toLocaleTimeString('vi-VN', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
     })
   );
 
-  // Quick-add character/location inside scene inspector
+  // Thêm nhanh Nhân vật / Bối cảnh ngay trong thanh bên phải
   const [quickCharName, setQuickCharName] = useState('');
   const [quickLocName, setQuickLocName] = useState('');
 
   const debounceTimerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Locate current Act, Chapter, and Scene
+  // Tìm Hồi, Chương và Cảnh hiện tại
   const activeContext = useMemo(() => {
     for (const act of activeProject.acts) {
       for (const chapter of act.chapters) {
@@ -125,7 +127,6 @@ export default function App() {
         }
       }
     }
-    // Fallback to first scene if available
     for (const act of activeProject.acts) {
       for (const chapter of act.chapters) {
         if (chapter.scenes.length > 0) {
@@ -136,7 +137,7 @@ export default function App() {
     return null;
   }, [activeProject, selectedSceneId]);
 
-  // Debounced persistence to localStorage (simulating the 750ms SQLite transaction in ui_editor.go)
+  // Tự động lưu trễ 750ms (mô phỏng cơ chế time.AfterFunc trong ui_editor.go)
   useEffect(() => {
     setSaveStatus('pending');
     if (debounceTimerRef.current) {
@@ -146,11 +147,11 @@ export default function App() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
       } catch {
-        // Ignore storage quota errors
+        // Bỏ qua nếu đầy bộ nhớ trình duyệt
       }
       setSaveStatus('saved');
       setLastSavedClock(
-        new Date().toLocaleTimeString([], {
+        new Date().toLocaleTimeString('vi-VN', {
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
@@ -165,14 +166,12 @@ export default function App() {
     };
   }, [projects]);
 
-  // Helper to update the active project immutably
   const updateActiveProject = (updater: (proj: Project) => Project) => {
     setProjects((prev) =>
       prev.map((p) => (p.id === activeProject.id ? updater(p) : p))
     );
   };
 
-  // Update the currently active scene
   const updateActiveScene = (updater: (sc: Scene) => Scene) => {
     if (!activeContext) return;
     const targetId = activeContext.scene.id;
@@ -197,7 +196,6 @@ export default function App() {
     }));
   };
 
-  // Update chapter target words
   const updateChapterTarget = (chapterId: number, targetWords: number) => {
     updateActiveProject((proj) => ({
       ...proj,
@@ -210,7 +208,7 @@ export default function App() {
     }));
   };
 
-  // Hierarchy CRUD operations
+  // Thao tác thêm/sửa/xóa/di chuyển trên cây Hồi -> Chương -> Cảnh
   const handleAddAct = () => {
     const nextNum = activeProject.acts.length + 1;
     const newActId = Date.now();
@@ -219,31 +217,32 @@ export default function App() {
     const newAct: Act = {
       id: newActId,
       projectId: activeProject.id,
-      title: `Act ${nextNum}: New Movement`,
-      sortOrder: nextNum,
+      title: `Hồi ${nextNum}: Chuyển Đoạn Mới`,
+      position: nextNum,
       chapters: [
         {
           id: newChapId,
           actId: newActId,
-          title: `Chapter 1: Opening Sequence`,
-          targetWords: 300,
-          sortOrder: 1,
+          title: `Chương 1: Khởi Đầu Mới`,
+          targetWords: 3000,
+          position: 1,
           scenes: [
             {
               id: newSceneId,
               chapterId: newChapId,
-              title: 'Scene 1: Untold Passage',
+              title: 'Cảnh 1: Phân Cảnh Mở Đầu',
+              summary: '',
               content: '',
               sideNotes: '',
-              status: 'Idea',
+              status: 'Ý tưởng',
               povCharacterId: activeProject.characters[0]?.id ?? null,
               locationId: activeProject.locations[0]?.id ?? null,
               characterIds: activeProject.characters[0]
                 ? [activeProject.characters[0].id]
                 : [],
-              targetWords: 200,
+              targetWords: 1200,
               wordCount: 0,
-              sortOrder: 1,
+              position: 1,
               updatedAt: new Date().toISOString(),
             },
           ],
@@ -268,23 +267,24 @@ export default function App() {
         const newChap: Chapter = {
           id: newChapId,
           actId: act.id,
-          title: `Chapter ${nextNum}: New Chapter`,
-          targetWords: 300,
-          sortOrder: nextNum,
+          title: `Chương ${nextNum}: Chương Mới`,
+          targetWords: 3000,
+          position: nextNum,
           scenes: [
             {
               id: newSceneId,
               chapterId: newChapId,
-              title: 'Scene 1: Draft Scene',
+              title: 'Cảnh 1: Bản Nháp Đầu Tiên',
+              summary: '',
               content: '',
               sideNotes: '',
-              status: 'Idea',
+              status: 'Ý tưởng',
               povCharacterId: proj.characters[0]?.id ?? null,
               locationId: proj.locations[0]?.id ?? null,
               characterIds: [],
-              targetWords: 200,
+              targetWords: 1200,
               wordCount: 0,
-              sortOrder: 1,
+              position: 1,
               updatedAt: new Date().toISOString(),
             },
           ],
@@ -308,16 +308,17 @@ export default function App() {
           const newSc: Scene = {
             id: newSceneId,
             chapterId: ch.id,
-            title: `Scene ${nextNum}: Untitled Scene`,
+            title: `Cảnh ${nextNum}: Cảnh Chưa Đặt Tên`,
+            summary: '',
             content: '',
             sideNotes: '',
-            status: 'Idea',
+            status: 'Ý tưởng',
             povCharacterId: proj.characters[0]?.id ?? null,
             locationId: proj.locations[0]?.id ?? null,
             characterIds: [],
-            targetWords: 200,
+            targetWords: 1200,
             wordCount: 0,
-            sortOrder: nextNum,
+            position: nextNum,
             updatedAt: new Date().toISOString(),
           };
           return { ...ch, scenes: [...ch.scenes, newSc] };
@@ -370,7 +371,7 @@ export default function App() {
       copy.splice(targetIdx, 0, item);
       return {
         ...proj,
-        acts: copy.map((a, idx) => ({ ...a, sortOrder: idx + 1 })),
+        acts: copy.map((a, idx) => ({ ...a, position: idx + 1 })),
       };
     });
   };
@@ -391,7 +392,7 @@ export default function App() {
         copy.splice(targetIdx, 0, item);
         return {
           ...act,
-          chapters: copy.map((c, idx) => ({ ...c, sortOrder: idx + 1 })),
+          chapters: copy.map((c, idx) => ({ ...c, position: idx + 1 })),
         };
       }),
     }));
@@ -415,7 +416,7 @@ export default function App() {
           copy.splice(targetIdx, 0, item);
           return {
             ...ch,
-            scenes: copy.map((s, idx) => ({ ...s, sortOrder: idx + 1 })),
+            scenes: copy.map((s, idx) => ({ ...s, position: idx + 1 })),
           };
         }),
       })),
@@ -459,7 +460,7 @@ export default function App() {
     });
   };
 
-  // Create new project
+  // Tạo dự án sách mới
   const handleCreateProject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBookTitle.trim()) return;
@@ -473,8 +474,8 @@ export default function App() {
     const newProj: Project = {
       id: pid,
       title: newBookTitle.trim(),
-      author: newBookAuthor.trim() || 'Author',
-      genre: 'Literary Fiction',
+      author: newBookAuthor.trim() || 'Tác giả',
+      genre: 'Tiểu thuyết Văn học',
       synopsis: '',
       targetWords: 60000,
       updatedAt: new Date().toISOString(),
@@ -482,47 +483,48 @@ export default function App() {
         {
           id: charId,
           projectId: pid,
-          name: 'Narrator',
-          role: 'Protagonist',
-          bio: 'Primary viewpoint character.',
+          name: 'Nhân vật dẫn chuyện',
+          role: 'Nhân vật chính',
+          description: 'Nhân vật trung tâm của tác phẩm.',
         },
       ],
       locations: [
         {
           id: locId,
           projectId: pid,
-          name: 'Primary Setting',
-          description: 'Opening location of the manuscript.',
+          name: 'Bối cảnh chính',
+          description: 'Không gian mở đầu của tiểu thuyết.',
         },
       ],
       acts: [
         {
           id: actId,
           projectId: pid,
-          title: 'Act I: Premise',
-          sortOrder: 1,
+          title: 'Hồi I: Khởi Đầu',
+          position: 1,
           chapters: [
             {
               id: chapId,
               actId,
-              title: 'Chapter 1: First Movement',
-              targetWords: 300,
-              sortOrder: 1,
+              title: 'Chương 1: Chương Mở Đầu',
+              targetWords: 3000,
+              position: 1,
               scenes: [
                 {
                   id: sceneId,
                   chapterId: chapId,
-                  title: 'Scene 1: Opening Image',
+                  title: 'Cảnh 1: Hình Ảnh Đầu Tiên',
+                  summary: 'Phân cảnh mở đầu của tiểu thuyết.',
                   content:
-                    'Begin drafting your opening scene here. Changes are automatically debounced and persisted to local storage.',
-                  sideNotes: 'Initial scene notes and structural beats.',
-                  status: 'Drafting',
+                    'Bắt đầu viết cảnh mở đầu của bạn tại đây. Mọi thay đổi sẽ tự động được lưu xuống bộ nhớ sau 750ms.',
+                  sideNotes: 'Ghi chú ý tưởng và dàn ý cho cảnh mở đầu.',
+                  status: 'Đang viết',
                   povCharacterId: charId,
                   locationId: locId,
                   characterIds: [charId],
-                  targetWords: 200,
-                  wordCount: 16,
-                  sortOrder: 1,
+                  targetWords: 1200,
+                  wordCount: 20,
+                  position: 1,
                   updatedAt: new Date().toISOString(),
                 },
               ],
@@ -532,7 +534,7 @@ export default function App() {
       ],
     };
 
-    setProjects((prev) => [...prev, newProj]);
+    setProjects((prev) => [newProj, ...prev]);
     setActiveProjectId(pid);
     setSelectedSceneId(sceneId);
     setNewBookTitle('');
@@ -540,24 +542,31 @@ export default function App() {
     setShowNewBookForm(false);
   };
 
-  // Character & Location management
+  // Quản lý Nhân vật & Bối cảnh
   const handleAddCharacter = (
     name: string,
-    role: Character['role'],
-    bio: string
+    role: string,
+    description: string
   ) => {
     const newChar: Character = {
       id: Date.now(),
       projectId: activeProject.id,
       name,
       role,
-      bio,
+      description,
     };
     updateActiveProject((proj) => ({
       ...proj,
       characters: [...proj.characters, newChar],
     }));
     return newChar.id;
+  };
+
+  const handleUpdateCharacter = (updated: Character) => {
+    updateActiveProject((proj) => ({
+      ...proj,
+      characters: proj.characters.map((c) => (c.id === updated.id ? updated : c)),
+    }));
   };
 
   const handleDeleteCharacter = (id: number) => {
@@ -579,7 +588,7 @@ export default function App() {
   };
 
   const handleAddLocation = (name: string, description: string) => {
-    const newLoc = {
+    const newLoc: Location = {
       id: Date.now(),
       projectId: activeProject.id,
       name,
@@ -590,6 +599,13 @@ export default function App() {
       locations: [...proj.locations, newLoc],
     }));
     return newLoc.id;
+  };
+
+  const handleUpdateLocation = (updated: Location) => {
+    updateActiveProject((proj) => ({
+      ...proj,
+      locations: proj.locations.map((l) => (l.id === updated.id ? updated : l)),
+    }));
   };
 
   const handleDeleteLocation = (id: number) => {
@@ -609,7 +625,6 @@ export default function App() {
     }));
   };
 
-  // Insert formatting snippet into prose textarea
   const insertProseSnippet = (snippet: string) => {
     if (!activeContext) return;
     const el = textareaRef.current;
@@ -628,7 +643,7 @@ export default function App() {
     }, 10);
   };
 
-  // Word count calculations
+  // Tính toán số từ và tiến độ
   const activeSceneWords = activeContext?.scene.wordCount ?? 0;
   const activeSceneTarget = Math.max(1, activeContext?.scene.targetWords ?? 200);
   const scenePercent = Math.min(
@@ -665,11 +680,18 @@ export default function App() {
     [activeProject]
   );
 
+  const renameKindLabel =
+    renamingNode?.kind === 'act'
+      ? 'Hồi'
+      : renamingNode?.kind === 'chapter'
+      ? 'Chương'
+      : 'Cảnh';
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F8F7F4] text-[#1C1B18]">
-      {/* Top Bar Contract: Strictly 1 row, 3 zones (Brand Wordmark — 5 Nav Links — 2 Actions) */}
+      {/* Thanh Điều Hướng Trên Cùng: Tuân thủ chuẩn 3 vùng (Thương hiệu — 5 Liên kết — 2 Nút hành động) */}
       <header className="h-14 px-6 border-b border-[#E6E4DD] bg-[#F8F7F4] flex items-center justify-between shrink-0">
-        {/* Zone 1: Single text element wordmark */}
+        {/* Vùng 1: Tên ứng dụng */}
         <a
           href="#studio"
           onClick={(e) => {
@@ -681,7 +703,7 @@ export default function App() {
           GoNovelist
         </a>
 
-        {/* Zone 2: 5 clean text navigation links */}
+        {/* Vùng 2: 5 liên kết điều hướng Tiếng Việt */}
         <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-[#68655E]">
           <button
             onClick={() => setActiveTab('studio')}
@@ -691,7 +713,7 @@ export default function App() {
                 : 'hover:text-[#1C1B18]'
             }`}
           >
-            Manuscript Studio
+            Bàn Viết Bản Thảo
           </button>
           <button
             onClick={() => setActiveTab('world')}
@@ -701,7 +723,7 @@ export default function App() {
                 : 'hover:text-[#1C1B18]'
             }`}
           >
-            World &amp; Cast
+            Nhân Vật &amp; Bối Cảnh
           </button>
           <button
             onClick={() => setActiveTab('export')}
@@ -711,7 +733,7 @@ export default function App() {
                 : 'hover:text-[#1C1B18]'
             }`}
           >
-            Compile &amp; Export
+            Kết Xuất Bản Thảo
           </button>
           <button
             onClick={() => setActiveTab('go-source')}
@@ -721,7 +743,7 @@ export default function App() {
                 : 'hover:text-[#1C1B18]'
             }`}
           >
-            Go Source Code
+            Mã Nguồn Go + Fyne
           </button>
           <button
             onClick={() => setActiveTab('architecture')}
@@ -731,11 +753,11 @@ export default function App() {
                 : 'hover:text-[#1C1B18]'
             }`}
           >
-            Schema &amp; Build
+            Lược Đồ &amp; Lệnh Build
           </button>
         </nav>
 
-        {/* Zone 3: 2 Primary Actions */}
+        {/* Vùng 3: 2 Nút hành động chính */}
         <div className="flex items-center gap-2.5">
           <button
             onClick={() => {
@@ -747,12 +769,12 @@ export default function App() {
             {distractionFree ? (
               <>
                 <Minimize2 className="w-3.5 h-3.5" />
-                Exit Focus
+                Thoát Tập Trung
               </>
             ) : (
               <>
                 <Maximize2 className="w-3.5 h-3.5" />
-                Distraction-Free
+                Chế Độ Tập Trung
               </>
             )}
           </button>
@@ -761,20 +783,20 @@ export default function App() {
             className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-[#1E3A5F] rounded-lg hover:bg-[#162B47] transition-colors whitespace-nowrap"
           >
             <Download className="w-3.5 h-3.5" />
-            Export Manuscript
+            Xuất Bản Thảo
           </button>
         </div>
       </header>
 
-      {/* Mobile Navigation Bar */}
+      {/* Thanh điều hướng trên màn hình nhỏ */}
       <div className="md:hidden flex items-center gap-2 overflow-x-auto px-4 py-2 border-b border-[#E6E4DD] bg-[#F1EFEA] text-xs">
         {(
           [
-            ['studio', 'Studio'],
-            ['world', 'World & Cast'],
-            ['export', 'Export'],
-            ['go-source', 'Go Source'],
-            ['architecture', 'Schema & Build'],
+            ['studio', 'Bàn Viết'],
+            ['world', 'Nhân Vật & Bối Cảnh'],
+            ['export', 'Kết Xuất'],
+            ['go-source', 'Mã Nguồn Go'],
+            ['architecture', 'Lược Đồ & Build'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -791,14 +813,16 @@ export default function App() {
         ))}
       </div>
 
-      {/* Main Content Area */}
+      {/* Khu vực nội dung chính */}
       {activeTab === 'world' && (
         <main className="flex-1 overflow-y-auto">
           <WorldCastView
             project={activeProject}
             onAddCharacter={handleAddCharacter}
+            onUpdateCharacter={handleUpdateCharacter}
             onDeleteCharacter={handleDeleteCharacter}
             onAddLocation={handleAddLocation}
+            onUpdateLocation={handleUpdateLocation}
             onDeleteLocation={handleDeleteLocation}
             onSelectScene={(sceneId) => {
               setSelectedSceneId(sceneId);
@@ -822,16 +846,16 @@ export default function App() {
 
       {activeTab === 'architecture' && (
         <main className="flex-1 overflow-y-auto">
-          <GoSourceExplorer mode="architecture" />
+          <GoSourceExplorer mode="build" />
         </main>
       )}
 
       {activeTab === 'studio' && (
         <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-[calc(100vh-3.5rem)]">
-          {/* 1. Left Sidebar: Hierarchical Tree Structure (Project -> Act -> Chapter -> Scene) */}
+          {/* 1. Cột Trái: Cây Phân Cấp Bản Thảo (Dự án -> Hồi -> Chương -> Cảnh) */}
           {!distractionFree && (
             <aside className="lg:col-span-3 border-b lg:border-b-0 lg:border-r border-[#E6E4DD] bg-[#F1EFEA]/70 flex flex-col">
-              {/* Project Selector & New Book */}
+              {/* Chọn tác phẩm & Tạo tác phẩm mới */}
               <div className="p-4 border-b border-[#E6E4DD] space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <select
@@ -856,7 +880,7 @@ export default function App() {
                     onClick={() => setShowNewBookForm((v) => !v)}
                     className="px-2.5 py-1.5 text-xs font-medium text-[#1C1B18] bg-white border border-[#DCD9D0] rounded-lg hover:bg-[#EAE7DF] transition-colors whitespace-nowrap"
                   >
-                    + Book
+                    + Sách Mới
                   </button>
                 </div>
 
@@ -869,14 +893,14 @@ export default function App() {
                       type="text"
                       value={newBookTitle}
                       onChange={(e) => setNewBookTitle(e.target.value)}
-                      placeholder="Novel Title..."
+                      placeholder="Tên tiểu thuyết..."
                       className="w-full px-2.5 py-1.5 text-xs border border-[#DCD9D0] rounded focus:outline-none focus:border-[#1E3A5F]"
                     />
                     <input
                       type="text"
                       value={newBookAuthor}
                       onChange={(e) => setNewBookAuthor(e.target.value)}
-                      placeholder="Author Name..."
+                      placeholder="Tên bút danh / tác giả..."
                       className="w-full px-2.5 py-1.5 text-xs border border-[#DCD9D0] rounded focus:outline-none focus:border-[#1E3A5F]"
                     />
                     <div className="flex items-center justify-end gap-1.5">
@@ -885,19 +909,19 @@ export default function App() {
                         onClick={() => setShowNewBookForm(false)}
                         className="px-2.5 py-1 text-xs text-[#68655E]"
                       >
-                        Cancel
+                        Hủy
                       </button>
                       <button
                         type="submit"
                         className="px-2.5 py-1 text-xs font-semibold text-white bg-[#1E3A5F] rounded"
                       >
-                        Create
+                        Tạo Mới
                       </button>
                     </div>
                   </form>
                 )}
 
-                {/* Tree Filter & Add Act Button */}
+                {/* Ô tìm kiếm & Nút thêm Hồi */}
                 <div className="flex items-center gap-2">
                   <div className="relative flex-1">
                     <Search className="w-3.5 h-3.5 text-[#68655E] absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -905,7 +929,7 @@ export default function App() {
                       type="text"
                       value={treeSearch}
                       onChange={(e) => setTreeSearch(e.target.value)}
-                      placeholder="Filter acts, chapters, scenes..."
+                      placeholder="Tìm hồi, chương, cảnh..."
                       className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
                     />
                   </div>
@@ -914,16 +938,16 @@ export default function App() {
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-[#1E3A5F] rounded-lg hover:bg-[#162B47] transition-colors whitespace-nowrap"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    Act
+                    Hồi
                   </button>
                 </div>
               </div>
 
-              {/* Inline Rename Bar (if active) */}
+              {/* Thanh đổi tên trực tiếp */}
               {renamingNode && (
                 <div className="p-3 bg-[#FFFBEB] border-b border-[#E6E4DD] space-y-2">
                   <div className="text-xs font-medium text-[#1C1B18]">
-                    Rename {renamingNode.kind}:
+                    Đổi tên {renameKindLabel}:
                   </div>
                   <div className="flex items-center gap-1.5">
                     <input
@@ -946,19 +970,19 @@ export default function App() {
                       onClick={handleCommitRename}
                       className="px-2.5 py-1 text-xs font-semibold text-white bg-[#1E3A5F] rounded"
                     >
-                      Save
+                      Lưu
                     </button>
                     <button
                       onClick={() => setRenamingNode(null)}
                       className="px-2 py-1 text-xs text-[#68655E]"
                     >
-                      Cancel
+                      Hủy
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Hierarchical Tree List */}
+              {/* Danh sách Cây Hồi -> Chương -> Cảnh */}
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
                 {activeProject.acts.map((act, actIdx) => {
                   const isActCollapsed = !!collapsedActs[act.id];
@@ -973,7 +997,7 @@ export default function App() {
                       key={act.id}
                       className="border border-[#E6E4DD] bg-white rounded-lg overflow-hidden"
                     >
-                      {/* Act Row */}
+                      {/* Dòng Hồi */}
                       <div className="px-2.5 py-2 bg-[#EAE7DF]/60 flex items-center justify-between gap-1 group">
                         <button
                           onClick={() =>
@@ -996,14 +1020,14 @@ export default function App() {
 
                         <div className="flex items-center gap-1 shrink-0">
                           <span className="text-[11px] font-mono text-[#68655E] tabular-nums mr-1">
-                            {actWords}w
+                            {actWords} từ
                           </span>
                           <button
                             onClick={() => handleAddChapter(act.id)}
-                            title="Add Chapter to this Act"
+                            title="Thêm Chương vào Hồi này"
                             className="px-1.5 py-0.5 text-[11px] font-medium text-[#1E3A5F] hover:bg-white rounded whitespace-nowrap"
                           >
-                            +Ch
+                            +Chương
                           </button>
                           <button
                             onClick={() =>
@@ -1013,21 +1037,21 @@ export default function App() {
                                 title: act.title,
                               })
                             }
-                            title="Rename Act"
+                            title="Đổi tên Hồi"
                             className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                           >
                             <Edit3 className="w-3 h-3" />
                           </button>
                           <button
                             onClick={() => handleMoveAct(actIdx, -1)}
-                            title="Move Act Up"
+                            title="Chuyển Hồi lên"
                             className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                           >
                             <ArrowUp className="w-3 h-3" />
                           </button>
                           <button
                             onClick={() => handleMoveAct(actIdx, 1)}
-                            title="Move Act Down"
+                            title="Chuyển Hồi xuống"
                             className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                           >
                             <ArrowDown className="w-3 h-3" />
@@ -1035,7 +1059,7 @@ export default function App() {
                           {activeProject.acts.length > 1 && (
                             <button
                               onClick={() => handleDeleteNode('act', act.id)}
-                              title="Delete Act"
+                              title="Xóa Hồi"
                               className="p-1 text-[#68655E] hover:text-red-700"
                             >
                               <Trash2 className="w-3 h-3" />
@@ -1044,7 +1068,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Chapters inside Act */}
+                      {/* Danh sách Chương trong Hồi */}
                       {!isActCollapsed && (
                         <div className="divide-y divide-[#F1EFEA]">
                           {act.chapters.map((chapter, chIdx) => {
@@ -1079,7 +1103,7 @@ export default function App() {
 
                             return (
                               <div key={chapter.id} className="bg-white">
-                                {/* Chapter Header */}
+                                {/* Dòng Chương */}
                                 <div className="pl-4 pr-2.5 py-1.5 bg-[#F8F7F4]/80 flex items-center justify-between gap-1">
                                   <button
                                     onClick={() =>
@@ -1102,14 +1126,14 @@ export default function App() {
 
                                   <div className="flex items-center gap-0.5 shrink-0">
                                     <span className="text-[11px] font-mono text-[#68655E] tabular-nums mr-1">
-                                      {chapWords}w
+                                      {chapWords} từ
                                     </span>
                                     <button
                                       onClick={() => handleAddScene(chapter.id)}
-                                      title="Add Scene to Chapter"
+                                      title="Thêm Cảnh vào Chương này"
                                       className="px-1.5 py-0.5 text-[11px] font-medium text-[#1E3A5F] hover:bg-white rounded whitespace-nowrap"
                                     >
-                                      +Sc
+                                      +Cảnh
                                     </button>
                                     <button
                                       onClick={() =>
@@ -1119,7 +1143,7 @@ export default function App() {
                                           title: chapter.title,
                                         })
                                       }
-                                      title="Rename Chapter"
+                                      title="Đổi tên Chương"
                                       className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                                     >
                                       <Edit3 className="w-3 h-3" />
@@ -1128,7 +1152,7 @@ export default function App() {
                                       onClick={() =>
                                         handleMoveChapter(act.id, chIdx, -1)
                                       }
-                                      title="Move Chapter Up"
+                                      title="Chuyển Chương lên"
                                       className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                                     >
                                       <ArrowUp className="w-3 h-3" />
@@ -1137,7 +1161,7 @@ export default function App() {
                                       onClick={() =>
                                         handleMoveChapter(act.id, chIdx, 1)
                                       }
-                                      title="Move Chapter Down"
+                                      title="Chuyển Chương xuống"
                                       className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                                     >
                                       <ArrowDown className="w-3 h-3" />
@@ -1150,7 +1174,7 @@ export default function App() {
                                             chapter.id
                                           )
                                         }
-                                        title="Delete Chapter"
+                                        title="Xóa Chương"
                                         className="p-1 text-[#68655E] hover:text-red-700"
                                       >
                                         <Trash2 className="w-3 h-3" />
@@ -1159,7 +1183,7 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                {/* Scenes List */}
+                                {/* Danh sách Cảnh trong Chương */}
                                 {!isChapCollapsed && (
                                   <div className="py-1 space-y-0.5">
                                     {filteredScenes.map((scene, scIdx) => {
@@ -1189,11 +1213,15 @@ export default function App() {
                                             >
                                               {scene.title}
                                             </div>
-                                            {/* Clean unboxed metadata with typographic separator */}
+                                            {/* Metadata văn bản thuần có dấu chấm ngăn cách */}
                                             <div className="text-[11px] text-[#68655E] font-mono tabular-nums">
-                                              <span>{scene.status}</span>
+                                              <span>
+                                                {normalizeStatus(
+                                                  scene.status
+                                                )}
+                                              </span>
                                               <span className="mx-1.5">·</span>
-                                              <span>{scene.wordCount}w</span>
+                                              <span>{scene.wordCount} từ</span>
                                             </div>
                                           </button>
 
@@ -1206,7 +1234,7 @@ export default function App() {
                                                   title: scene.title,
                                                 })
                                               }
-                                              title="Rename Scene"
+                                              title="Đổi tên Cảnh"
                                               className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                                             >
                                               <Edit3 className="w-3 h-3" />
@@ -1219,7 +1247,7 @@ export default function App() {
                                                   -1
                                                 )
                                               }
-                                              title="Move Scene Up"
+                                              title="Chuyển Cảnh lên"
                                               className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                                             >
                                               <ArrowUp className="w-3 h-3" />
@@ -1232,7 +1260,7 @@ export default function App() {
                                                   1
                                                 )
                                               }
-                                              title="Move Scene Down"
+                                              title="Chuyển Cảnh xuống"
                                               className="p-1 text-[#68655E] hover:text-[#1C1B18]"
                                             >
                                               <ArrowDown className="w-3 h-3" />
@@ -1245,7 +1273,7 @@ export default function App() {
                                                     scene.id
                                                   )
                                                 }
-                                                title="Delete Scene"
+                                                title="Xóa Cảnh"
                                                 className="p-1 text-[#68655E] hover:text-red-700"
                                               >
                                                 <Trash2 className="w-3 h-3" />
@@ -1267,18 +1295,18 @@ export default function App() {
                 })}
               </div>
 
-              {/* Manuscript Total Word Count Footer */}
+              {/* Chân trang tổng số từ toàn bản thảo */}
               <div className="p-3.5 border-t border-[#E6E4DD] bg-[#EAE7DF]/50 flex items-center justify-between text-xs font-mono tabular-nums text-[#3A3832]">
-                <span>Manuscript Total</span>
+                <span>Tổng số từ bản thảo</span>
                 <span className="font-semibold">
                   {totalProjectWords.toLocaleString()} /{' '}
-                  {activeProject.targetWords.toLocaleString()} words
+                  {activeProject.targetWords.toLocaleString()} từ
                 </span>
               </div>
             </aside>
           )}
 
-          {/* 2. Center Panel: Rich Text & Distraction-Free Scene Editor */}
+          {/* 2. Khung Giữa: Trình Soạn Thảo Văn Xuôi & Chế Độ Tập Trung */}
           <section
             className={`${
               distractionFree
@@ -1288,7 +1316,7 @@ export default function App() {
           >
             {activeContext ? (
               <>
-                {/* Editor Top Context & Formatting Toolbar */}
+                {/* Thanh tiêu đề & Công cụ định dạng */}
                 <div className="px-6 py-4 border-b border-[#E6E4DD] space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#68655E]">
                     <div className="truncate">
@@ -1299,17 +1327,17 @@ export default function App() {
                     <div className="font-mono tabular-nums text-xs">
                       {saveStatus === 'pending' ? (
                         <span className="text-amber-700">
-                          Auto-saving (750ms debounce)...
+                          Đang tự động lưu (trễ 750ms)...
                         </span>
                       ) : (
                         <span className="text-[#68655E]">
-                          Saved to SQLite store · {lastSavedClock}
+                          Đã lưu vào SQLite · {lastSavedClock}
                         </span>
                       )}
                     </div>
                   </div>
 
-                  {/* Editable Scene Title */}
+                  {/* Tiêu đề Cảnh có thể sửa trực tiếp */}
                   <input
                     type="text"
                     value={activeContext.scene.title}
@@ -1320,39 +1348,39 @@ export default function App() {
                       }))
                     }
                     className="w-full font-serif-display text-2xl md:text-3xl font-semibold text-[#1C1B18] bg-transparent border-none focus:outline-none"
-                    placeholder="Scene Title..."
+                    placeholder="Nhập tiêu đề Cảnh..."
                   />
 
-                  {/* Formatting Buttons & Write/Preview Segmented Switch */}
+                  {/* Nút định dạng nhanh & Chuyển chế độ Soạn thảo / Xem bản in */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => insertProseSnippet('**bold text**')}
+                        onClick={() => insertProseSnippet('**in đậm**')}
                         className="px-2.5 py-1 text-xs font-semibold text-[#1C1B18] bg-white border border-[#DCD9D0] rounded hover:bg-[#F1EFEA] transition-colors"
                       >
-                        B
+                        Đậm
                       </button>
                       <button
-                        onClick={() => insertProseSnippet('*italic text*')}
+                        onClick={() => insertProseSnippet('*in nghiêng*')}
                         className="px-2.5 py-1 text-xs italic font-serif-display text-[#1C1B18] bg-white border border-[#DCD9D0] rounded hover:bg-[#F1EFEA] transition-colors"
                       >
-                        I
+                        Nghiêng
                       </button>
                       <button
                         onClick={() =>
-                          insertProseSnippet('\n\n## Section Heading\n\n')
+                          insertProseSnippet('\n\n## Tiêu đề phân đoạn\n\n')
                         }
                         className="px-2.5 py-1 text-xs font-medium text-[#1C1B18] bg-white border border-[#DCD9D0] rounded hover:bg-[#F1EFEA] transition-colors"
                       >
-                        H2
+                        Tiêu đề phụ
                       </button>
                       <button
                         onClick={() =>
-                          insertProseSnippet('\n\n> Quoted passage\n\n')
+                          insertProseSnippet('\n\n> Đoạn trích dẫn\n\n')
                         }
                         className="px-2.5 py-1 text-xs font-medium text-[#1C1B18] bg-white border border-[#DCD9D0] rounded hover:bg-[#F1EFEA] transition-colors"
                       >
-                        Quote
+                        Trích dẫn
                       </button>
                       <button
                         onClick={() => insertProseSnippet('\n\n* * *\n\n')}
@@ -1371,7 +1399,7 @@ export default function App() {
                             : 'text-[#68655E] hover:text-[#1C1B18]'
                         }`}
                       >
-                        Write Prose
+                        Soạn Thảo
                       </button>
                       <button
                         onClick={() => setEditorMode('preview')}
@@ -1382,13 +1410,13 @@ export default function App() {
                         }`}
                       >
                         <Eye className="w-3 h-3" />
-                        Typeset View
+                        Xem Bản In
                       </button>
                     </div>
                   </div>
                 </div>
 
-                {/* Main Prose Canvas */}
+                {/* Vùng viết văn xuôi trung tâm */}
                 <div className="flex-1 flex flex-col p-6 md:px-10 md:py-8 overflow-y-auto">
                   {editorMode === 'write' ? (
                     <textarea
@@ -1400,7 +1428,7 @@ export default function App() {
                           content: e.target.value,
                         }))
                       }
-                      placeholder="Begin writing your scene prose..."
+                      placeholder="Bắt đầu viết nội dung cảnh truyện bằng tiếng Việt tại đây..."
                       className="w-full flex-1 min-h-[420px] resize-none bg-transparent border-none focus:outline-none font-serif-display text-xl leading-[1.8] text-[#1C1B18] max-w-[68ch] mx-auto"
                     />
                   ) : (
@@ -1450,14 +1478,14 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Real-Time Word Count & Target Progress Footer (Scene & Chapter) */}
+                {/* Thanh Tiến Độ Số Từ Theo Thời Gian Thực (Cảnh & Chương) */}
                 <div className="px-6 py-3.5 border-t border-[#E6E4DD] bg-[#F1EFEA]/60 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs font-mono tabular-nums">
-                      <span className="text-[#68655E]">Scene Word Progress</span>
+                      <span className="text-[#68655E]">Tiến độ từ của Cảnh</span>
                       <span className="font-semibold text-[#1C1B18]">
-                        {activeSceneWords} / {activeContext.scene.targetWords}w (
-                        {scenePercent}%)
+                        {activeSceneWords} / {activeContext.scene.targetWords}{' '}
+                        từ ({scenePercent}%)
                       </span>
                     </div>
                     <div className="h-1.5 w-full bg-[#DCD9D0] rounded-full overflow-hidden">
@@ -1473,11 +1501,12 @@ export default function App() {
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs font-mono tabular-nums">
                       <span className="text-[#68655E]">
-                        Chapter Total Progress
+                        Tổng tiến độ của Chương
                       </span>
                       <span className="font-semibold text-[#1C1B18]">
                         {activeChapterWords} /{' '}
-                        {activeContext.chapter.targetWords}w ({chapterPercent}%)
+                        {activeContext.chapter.targetWords} từ ({chapterPercent}
+                        %)
                       </span>
                     </div>
                     <div className="h-1.5 w-full bg-[#DCD9D0] rounded-full overflow-hidden">
@@ -1493,15 +1522,15 @@ export default function App() {
               </>
             ) : (
               <div className="p-12 text-center text-sm text-[#68655E]">
-                Select or create a scene from the hierarchy tree to begin writing.
+                Hãy chọn hoặc tạo mới một Cảnh ở cây thư mục bên trái để bắt đầu viết.
               </div>
             )}
           </section>
 
-          {/* 3. Right Inspector: Context & Metadata Mapping + Side Notes */}
+          {/* 3. Cột Phải: Ngữ Cảnh, Nhân Vật, Bối Cảnh & Sổ Tay Ghi Chú Bên Lề */}
           {!distractionFree && activeContext && (
             <aside className="lg:col-span-3 bg-[#F1EFEA]/70 flex flex-col">
-              {/* Segmented Inspector Switcher */}
+              {/* Chuyển đổi tab Ngữ cảnh / Ghi chú bên lề */}
               <div className="p-4 border-b border-[#E6E4DD]">
                 <div className="grid grid-cols-2 gap-1 p-1 bg-[#EAE7DF] rounded-lg">
                   <button
@@ -1512,7 +1541,7 @@ export default function App() {
                         : 'text-[#68655E] hover:text-[#1C1B18]'
                     }`}
                   >
-                    Context &amp; Cast
+                    Ngữ Cảnh &amp; Nhân Vật
                   </button>
                   <button
                     onClick={() => setInspectorTab('notes')}
@@ -1522,21 +1551,22 @@ export default function App() {
                         : 'text-[#68655E] hover:text-[#1C1B18]'
                     }`}
                   >
-                    Side Notes
+                    Ghi Chú Bên Lề
                   </button>
                 </div>
               </div>
 
               {inspectorTab === 'context' ? (
                 <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                  {/* Editorial Status Selector */}
+                  {/* Bộ chọn Trạng thái biên tập */}
                   <div>
                     <label className="block text-xs font-semibold text-[#1C1B18] mb-2">
-                      Editorial Status
+                      Trạng Thái Cảnh
                     </label>
                     <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#EAE7DF] rounded-lg">
                       {ALL_STATUSES.map((st: SceneStatus) => {
-                        const active = activeContext.scene.status === st;
+                        const active =
+                          normalizeStatus(activeContext.scene.status) === st;
                         return (
                           <button
                             key={st}
@@ -1556,10 +1586,10 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Point of View (POV) Character Selector */}
+                  {/* Chọn Nhân vật Góc nhìn (POV) */}
                   <div>
                     <label className="block text-xs font-semibold text-[#1C1B18] mb-1.5">
-                      Point of View (POV) Character
+                      Góc Nhìn Trần Thuật (POV)
                     </label>
                     <select
                       value={activeContext.scene.povCharacterId ?? ''}
@@ -1574,7 +1604,7 @@ export default function App() {
                       }}
                       className="w-full px-3 py-2 text-xs bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
                     >
-                      <option value="">(No specific POV)</option>
+                      <option value="">(Không chọn góc nhìn riêng)</option>
                       {activeProject.characters.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name} · {c.role}
@@ -1583,10 +1613,10 @@ export default function App() {
                     </select>
                   </div>
 
-                  {/* Location / Setting Selector */}
+                  {/* Chọn Bối cảnh / Địa điểm */}
                   <div>
                     <label className="block text-xs font-semibold text-[#1C1B18] mb-1.5">
-                      Scene Location / Setting
+                      Bối Cảnh / Địa Điểm Diễn Ra
                     </label>
                     <select
                       value={activeContext.scene.locationId ?? ''}
@@ -1601,7 +1631,7 @@ export default function App() {
                       }}
                       className="w-full px-3 py-2 text-xs bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
                     >
-                      <option value="">(Unassigned Setting)</option>
+                      <option value="">(Chưa gắn bối cảnh)</option>
                       {activeProject.locations.map((l) => (
                         <option key={l.id} value={l.id}>
                           {l.name}
@@ -1609,13 +1639,13 @@ export default function App() {
                       ))}
                     </select>
 
-                    {/* Quick inline location creator */}
+                    {/* Thêm nhanh bối cảnh */}
                     <div className="mt-2 flex items-center gap-1.5">
                       <input
                         type="text"
                         value={quickLocName}
                         onChange={(e) => setQuickLocName(e.target.value)}
-                        placeholder="New location name..."
+                        placeholder="Tên bối cảnh mới..."
                         className="flex-1 px-2.5 py-1 text-xs bg-white border border-[#DCD9D0] rounded focus:outline-none focus:border-[#1E3A5F]"
                       />
                       <button
@@ -1634,19 +1664,19 @@ export default function App() {
                         }}
                         className="px-2.5 py-1 text-xs font-medium text-[#1E3A5F] bg-white border border-[#DCD9D0] rounded hover:bg-[#EAE7DF] whitespace-nowrap"
                       >
-                        + Add
+                        + Thêm
                       </button>
                     </div>
                   </div>
 
-                  {/* Multi-Select Characters Present in Scene */}
+                  {/* Chọn nhiều Nhân vật xuất hiện trong Cảnh */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-xs font-semibold text-[#1C1B18]">
-                        Characters Present in Scene
+                        Nhân Vật Xuất Hiện Trong Cảnh
                       </label>
                       <span className="text-[11px] font-mono text-[#68655E] tabular-nums">
-                        {activeContext.scene.characterIds.length} assigned
+                        Đã chọn {activeContext.scene.characterIds.length}
                       </span>
                     </div>
 
@@ -1697,13 +1727,13 @@ export default function App() {
                       })}
                     </div>
 
-                    {/* Quick inline character creator */}
+                    {/* Thêm nhanh nhân vật */}
                     <div className="mt-2 flex items-center gap-1.5">
                       <input
                         type="text"
                         value={quickCharName}
                         onChange={(e) => setQuickCharName(e.target.value)}
-                        placeholder="New character name..."
+                        placeholder="Tên nhân vật mới..."
                         className="flex-1 px-2.5 py-1 text-xs bg-white border border-[#DCD9D0] rounded focus:outline-none focus:border-[#1E3A5F]"
                       />
                       <button
@@ -1712,7 +1742,7 @@ export default function App() {
                           if (!quickCharName.trim()) return;
                           const newId = handleAddCharacter(
                             quickCharName.trim(),
-                            'Supporting',
+                            'Nhân vật phụ',
                             ''
                           );
                           updateActiveScene((sc) => ({
@@ -1723,16 +1753,16 @@ export default function App() {
                         }}
                         className="px-2.5 py-1 text-xs font-medium text-[#1E3A5F] bg-white border border-[#DCD9D0] rounded hover:bg-[#EAE7DF] whitespace-nowrap"
                       >
-                        + Cast
+                        + Thêm
                       </button>
                     </div>
                   </div>
 
-                  {/* Preset Word Count Targets */}
+                  {/* Thiết lập chỉ tiêu số từ */}
                   <div className="pt-4 border-t border-[#E6E4DD] grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] font-medium text-[#68655E] mb-1">
-                        Scene Word Target
+                        Mục tiêu từ (Cảnh)
                       </label>
                       <input
                         type="number"
@@ -1751,7 +1781,7 @@ export default function App() {
                     </div>
                     <div>
                       <label className="block text-[11px] font-medium text-[#68655E] mb-1">
-                        Chapter Word Target
+                        Mục tiêu từ (Chương)
                       </label>
                       <input
                         type="number"
@@ -1771,15 +1801,15 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                /* Side Notes Scratchpad Tab */
+                /* Tab Sổ Tay Ghi Chú Bên Lề */
                 <div className="flex-1 flex flex-col p-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-xs font-semibold text-[#1C1B18]">
-                        Scene Scratchpad &amp; Continuity Notes
+                        Sổ Tay Nháp &amp; Ghi Chú Liên Kết
                       </h3>
                       <p className="text-[11px] text-[#68655E]">
-                        Attached to {activeContext.scene.title}
+                        Gắn riêng với {activeContext.scene.title}
                       </p>
                     </div>
                     <button
@@ -1789,15 +1819,18 @@ export default function App() {
                           ...sc,
                           sideNotes:
                             (sc.sideNotes ? sc.sideNotes + '\n\n' : '') +
-                            `• Note (${new Date().toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}): `,
+                            `• Ghi chú (${new Date().toLocaleTimeString(
+                              'vi-VN',
+                              {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              }
+                            )}): `,
                         }))
                       }
                       className="px-2.5 py-1 text-xs font-medium text-[#1E3A5F] bg-white border border-[#DCD9D0] rounded hover:bg-[#EAE7DF] whitespace-nowrap"
                     >
-                      + Bullet Note
+                      + Dòng ghi chú
                     </button>
                   </div>
 
@@ -1809,7 +1842,7 @@ export default function App() {
                         sideNotes: e.target.value,
                       }))
                     }
-                    placeholder="Jot down scene beats, research fragments, sensory cues, or continuity reminders..."
+                    placeholder="Ghi nhanh ý tưởng thoại, chi tiết phục tuyến, tư liệu lịch sử hoặc lưu ý chỉnh sửa cho cảnh này..."
                     className="w-full flex-1 min-h-[320px] p-3.5 text-xs leading-relaxed bg-white border border-[#DCD9D0] rounded-xl focus:outline-none focus:border-[#1E3A5F] resize-none"
                   />
                 </div>

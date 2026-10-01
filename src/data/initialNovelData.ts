@@ -1,163 +1,166 @@
 import { Project, countWords } from '../types/novelist';
 
-const scene1Prose = `Elena held the seventeenth-century crown glass up to the sodium lamp. Inside the annealing striae, a hairline fracture traced the exact contour of an archipelago no Admiralty chart admitted existed.
+const scene1Prose = `Ngọc Liên nâng phiến thủy tinh cổ thế kỷ mười bảy lên trước ngọn đèn dầu lạc. Bên trong lớp pha lê trong vắt, một vết rạn mảnh như sợi tơ bỗng khúc xạ ánh sáng vàng ấm thành hình dáng một quần đảo chưa từng xuất hiện trên bất kỳ tấm bản đồ hàng hải nào của triều đình.
 
-Outside the Vault windows, the November tide struck the sea wall in slow, deliberate intervals. Julian set his brass calipers beside her tray of rouge powder and leaned over the slate workbench.
+Ngoài hiên gỗ, tiếng nước sông Thu Bồn vỗ nhẹ vào mạn thuyền buôn dưới màn sương đầu thu.
 
-"You're looking at the third grinding mark," Julian said quietly. "Spinoza didn't polish it out. He engraved a latitude."
+"Cô nhìn kỹ góc lệch của chùm sáng xem," Trần Đình Bách vừa nói vừa đặt chiếc la bàn đồng cũ kỹ lên mặt bàn gỗ lim. "Đó không phải vết nứt ngẫu nhiên khi làm nguội thủy tinh. Người thợ xưa đã cố tình giấu tọa độ vào độ cong của thấu kính."
 
-Elena rotated the bronze bezel fifteen degrees. Where the sodium beam crossed the bevel, three tiny numerals emerged in reverse script: fifty-four degrees, nineteen minutes north. Not a flaw in the cooling furnace—an intentional witness mark hidden inside an instrument commissioned for the Royal Hydrographer in 1674.
+Ngọc Liên xoay nhẹ vòng đồng quanh thấu kính thêm ba khắc. Bóng tối trên tờ giấy dó trải dưới mặt bàn lập tức tách làm đôi, để lộ ba vạch kinh tuyến giao nhau ngay ngoài khơi Cù Lao Chàm.`;
 
-"If Maren inventories Drawer Fourteen before the equinox," Elena murmured, setting the lens back into its velvet housing, "she won't just seal the ledger. She'll have the harbour chain raised."`;
+const scene2Prose = `Cụ Thủ Từ họ Phạm chậm rãi mở chiếc rương gỗ trầm hương khóa đồng. Bên trong không phải vàng bạc mà là những cuộn giấy dó đã ngả màu thời gian, ghi chép nhật ký của đội thương thuyền mất tích tám mươi năm trước.
 
-const scene2Prose = `Before the bell for night lockup finished its third chime, Archivist Maren stood on the iron gallery above the restoration tables. Her keyring did not rattle; she held the warded bronze key pinched between gloved fingers to silence the brass wards.
+"Mỗi thấu kính được đúc thành một cặp song sinh," cụ trầm giọng nói, ngón tay gầy guộc chỉ vào dòng chữ Hán Nôm viết bằng mực chu sa. "Một phiến đặt trên đỉnh hải đăng cổ ngoài đảo xa, phiến kia nằm trong tay người hoa tiêu dẫn đường."
 
-"Crate nineteen from the Dogger Bank salvage," Maren called down, her voice carrying cleanly beneath the copper vault. "The Board requires the lens blanks sealed in beeswax before midnight."
+Đình Bách cúi xuống sát trang giấy: "Vậy nghĩa là ngọn hải đăng ấy vẫn còn nguyên vẹn dưới lớp sương mù Nam Hải?"
 
-Elena kept her palm steady over the chamois cloth. Beneath its folds lay the true objective lens, warm from the lamp housing, while the unground flint blank sat exposed beside the ledger ready for Maren's wax seal.
+"Chỉ mở lối vào đêm rằm tháng tám khi thủy triều xuống thấp nhất," cụ Thủ Từ khẽ gật đầu, ánh mắt xa xăm nhìn ra làn mưa bụi ngoài mái ngói âm dương.`;
 
-"The bevel is still cooling from the pitch lap, Madam Archivist," Elena replied without looking up. "Give the balsam twenty minutes to cure or the crown will delaminate in the salt damp."`;
+const scene3Prose = `Đình Bách trải tấm hải đồ da dê lên mặt bàn, dùng thước đo góc bằng đồng đối chiếu từng chấm sáng phản chiếu từ thấu kính lên bản vẽ.
 
-const scene3Prose = `At moonrise they mounted the refractor in the Meridian Tower shutter. Wind off the North Breakwater rattled the copper louvers, carrying freezing spray across the granite sill.
+Mỗi giao điểm ánh sáng tương ứng với một rạn đá ngầm hình bán nguyệt. Nếu đi lệch chỉ nửa hải lý, con tàu buôn sẽ va phải vách đá dựng đứng dưới lòng biển.
 
-Julian adjusted the counterweight until the brass tube balanced on its trunnions. When the star Fomalhaut crossed the hairline wire, the phantom shoreline resolved in silver relief across the zinc projection plate—seven drowned sea-stacks linked by a submerged causeway leading four leagues west of St. Jude.
+"Chúng ta chỉ có đúng hai canh giờ trước khi gió mùa đông bắc tràn về," Đình Bách đánh dấu điểm neo cuối cùng bằng bút lông chấm mực tàu.`;
 
-"Forty-two minutes at the spring ebb," Julian read from the tidal tables pinned under his compass. "That is all the Atlantic grants us tomorrow night."`;
+const scene4Prose = `Tiếng kéo buồm kẽo kẹt vang lên giữa màn sương đặc quánh tại cửa biển Cửa Đại. Ngọc Liên ôm chặt chiếc hộp gỗ trắc đựng thấu kính trước ngực, lắng nghe tiếng sóng đập dồn dập vào mũi thuyền.
 
-const scene4Prose = `At the equinoctial spring ebb, the granite survey markers surfaced through the kelp beds for forty-two minutes.
-
-Elena stepped down from the skiff onto slick basalt dressed three centuries ago by Dutch masons. Ahead in the sea fog, the third milestone bore the same astronomical sigil ground into Spinoza's lens.`;
+Từ phía chân trời phương đông, một vệt sáng xanh biếc chợt lóe lên giữa tầng mây thấp — tín hiệu hồi đáp từ ngọn hải đăng cổ đã ngủ yên suốt một thế kỷ.`;
 
 export const INITIAL_PROJECTS: Project[] = [
   {
     id: 1,
-    title: 'The Glass Cartographer',
-    author: 'Clara Vance',
-    genre: 'Literary Speculative Fiction',
+    title: 'Bản Đồ Thủy Tinh Thành Hội An',
+    author: 'Nguyễn Minh Khuê',
+    genre: 'Tiểu thuyết Lịch sử & Kỳ ảo',
     synopsis:
-      'A seventeenth-century optical lens discovered in the Old Admiralty Vault reveals a hidden latitude and a submerged tidal causeway that only surfaces during the equinoctial ebb.',
-    targetWords: 75000,
-    updatedAt: '2026-10-01T04:30:00Z',
+      'Một nghệ nhân phục chế cổ vật tại thương cảng Hội An thế kỷ XIX phát hiện tấm hải đồ khắc ẩn trong thấu kính thủy tinh của ngọn hải đăng cổ.',
+    targetWords: 45000,
+    updatedAt: '2026-10-01T12:00:00Z',
     characters: [
       {
         id: 101,
         projectId: 1,
-        name: 'Elena Rostova',
-        role: 'Protagonist',
-        bio: 'Senior restorer of seventeenth-century celestial lenses at the Maritime Archive. Meticulous, observant, protective of historical artifacts.',
+        name: 'Lê Ngọc Liên',
+        role: 'Nhân vật chính',
+        description:
+          'Nghệ nhân chế tác và phục chế thấu kính tại phố cổ Hội An, am hiểu quang học cổ truyền và thư tịch Hán Nôm.',
       },
       {
         id: 102,
         projectId: 1,
-        name: 'Julian Vane',
-        role: 'Deuteragonist',
-        bio: 'Survey hydrographer dismissed from the Admiralty Board after questioning official soundings off St. Jude.',
+        name: 'Trần Đình Bách',
+        role: 'Đồng hành',
+        description:
+          'Thuyền trưởng tàu buôn từng đi qua vùng biển sương mù Nam Hải, giỏi thiên văn hàng hải và đọc hướng gió.',
       },
       {
         id: 103,
         projectId: 1,
-        name: 'Archivist Maren',
-        role: 'Antagonist',
-        bio: 'Keeper of the Sealed Ledger and custodian of the Admiralty Vault. Enforces the Board’s suppression of pre-1680 charts.',
-      },
-      {
-        id: 104,
-        projectId: 1,
-        name: 'Captain Hendrik Voort',
-        role: 'Supporting',
-        bio: 'Skipper of the salvage ketch Westerly who dredged Crate 19 from the Dogger Bank.',
+        name: 'Cụ Thủ Từ Họ Phạm',
+        role: 'Người dẫn đường',
+        description:
+          'Người trông coi kho thư tịch cổ tại hội quán, nắm giữ cuốn nhật ký hàng hải bị thất truyền.',
       },
     ],
     locations: [
       {
         id: 201,
         projectId: 1,
-        name: 'The Lantern Vault, Old Admiralty',
-        description: 'Subterranean copper-domed optical restoration chamber lit by monochromatic sodium lamps and oil refraction prisms.',
+        name: 'Xưởng Thủy Tinh Phố Cổ',
+        description:
+          'Căn gác gỗ nhìn ra sông Thu Bồn với những lò nung pha lê, bàn mài thấu kính và đèn dầu lạc.',
       },
       {
         id: 202,
         projectId: 1,
-        name: 'Cliffside Meridian Tower',
-        description: 'Wind-scoured basalt transit observatory overlooking the North Breakwater and tidal race.',
+        name: 'Thư Các Chùa Cầu',
+        description:
+          'Căn phòng lưu trữ bản đồ hàng hải, la bàn cổ và nhật ký thương thuyền trăm năm.',
       },
       {
         id: 203,
         projectId: 1,
-        name: 'The Submerged Causeway of St. Jude',
-        description: 'Drowned seventeenth-century stone survey road exposed only during the lowest equinoctial spring tide.',
+        name: 'Bến Thuyền Cửa Đại',
+        description:
+          'Cửa biển sương mù nơi sông Thu Bồn đổ ra biển lớn, điểm xuất phát của những chuyến hải trình đêm.',
       },
     ],
     acts: [
       {
         id: 11,
         projectId: 1,
-        title: 'Act I: The Refracted Meridian',
-        sortOrder: 1,
+        title: 'Hồi I — Vết Rạn Trong Thấu Kính',
+        position: 1,
         chapters: [
           {
             id: 111,
             actId: 11,
-            title: 'Chapter 1: Salt on the Objective Lens',
-            targetWords: 450,
-            sortOrder: 1,
+            title: 'Chương 1: Ánh Đèn Dầu Bên Sông Thu Bồn',
+            position: 1,
+            targetWords: 2500,
             scenes: [
               {
                 id: 1111,
                 chapterId: 111,
-                title: 'Scene 1: The Cracked Astrolabe',
+                title: 'Cảnh 1: Thấu Kính Khúc Xạ',
+                summary:
+                  'Ngọc Liên và Đình Bách phát hiện tấm hải đồ ẩn hiện qua ánh đèn xuyên qua thấu kính cổ.',
                 content: scene1Prose,
                 sideNotes:
-                  'Establish the sensory contrast between the warm sodium lamp inside the Lantern Vault and the freezing November tide outside.\n\nContinuity note: Spinoza ground lenses in Voorburg between 1663 and 1670.',
-                status: 'Completed',
+                  'Ghi chú: Nhấn mạnh chi tiết mùi dầu thông và tiếng nước sông Thu Bồn. Kiểm tra lại cách tính khắc giờ trên vòng đồng.',
+                status: 'Đã biên tập',
                 povCharacterId: 101,
                 locationId: 201,
-                characterIds: [101, 102],
-                targetWords: 200,
+                targetWords: 1200,
                 wordCount: countWords(scene1Prose),
-                sortOrder: 1,
-                updatedAt: '2026-10-01T04:15:00Z',
+                position: 1,
+                updatedAt: '2026-10-01T11:30:00Z',
+                characterIds: [101, 102],
               },
               {
                 id: 1112,
                 chapterId: 111,
-                title: "Scene 2: Maren's Inventory",
+                title: 'Cảnh 2: Cuộn Nhật Ký Bằng Giấy Dó',
+                summary:
+                  'Cụ Thủ Từ tiết lộ bí mật về cặp thấu kính song sinh và đội thuyền mất tích tám mươi năm trước.',
                 content: scene2Prose,
                 sideNotes:
-                  'Keep dialogue terse. Elena swaps the genuine lens with the flint glass blank from Drawer 9 before Maren descends the iron stair.',
-                status: 'Edited',
+                  'Cần bổ sung thêm mô tả về dấu triện bằng chu sa ở trang cuối cuốn nhật ký.',
+                status: 'Hoàn thành',
                 povCharacterId: 101,
-                locationId: 201,
-                characterIds: [101, 103],
-                targetWords: 220,
+                locationId: 202,
+                targetWords: 1200,
                 wordCount: countWords(scene2Prose),
-                sortOrder: 2,
-                updatedAt: '2026-10-01T04:22:00Z',
+                position: 2,
+                updatedAt: '2026-10-01T11:45:00Z',
+                characterIds: [101, 102, 103],
               },
             ],
           },
           {
             id: 112,
             actId: 11,
-            title: 'Chapter 2: The Admiralty Ledger',
-            targetWords: 350,
-            sortOrder: 2,
+            title: 'Chương 2: Mật Mã Trên Bản Đồ Hàng Hải',
+            position: 2,
+            targetWords: 2500,
             scenes: [
               {
                 id: 1121,
                 chapterId: 112,
-                title: 'Scene 1: Calibration at the Tower',
+                title: 'Cảnh 1: Đối Chiếu Sao Khuê',
+                summary:
+                  'Đình Bách tính toán góc phương vị từ bản đồ khúc xạ để tìm luồng lạch qua rạn đá ngầm.',
                 content: scene3Prose,
                 sideNotes:
-                  'Verify astronomical azimuth of Fomalhaut for late November at 54 degrees North latitude.\nInclude Captain Voort delivering the tide almanac.',
-                status: 'Drafting',
+                  'Ý tưởng mở rộng: Có người lạ mặt theo dõi xưởng thủy tinh từ bên kia bờ sông.',
+                status: 'Đang viết',
                 povCharacterId: 102,
-                locationId: 202,
-                characterIds: [101, 102, 104],
-                targetWords: 200,
+                locationId: 201,
+                targetWords: 1200,
                 wordCount: countWords(scene3Prose),
-                sortOrder: 1,
-                updatedAt: '2026-10-01T04:28:00Z',
+                position: 1,
+                updatedAt: '2026-10-01T11:50:00Z',
+                characterIds: [101, 102],
               },
             ],
           },
@@ -166,31 +169,96 @@ export const INITIAL_PROJECTS: Project[] = [
       {
         id: 12,
         projectId: 1,
-        title: 'Act II: Soundings in Amber',
-        sortOrder: 2,
+        title: 'Hồi II — Hải Trình Ngoài Sương Mù',
+        position: 2,
         chapters: [
           {
             id: 121,
             actId: 12,
-            title: 'Chapter 3: Low Tide at St. Jude',
-            targetWords: 400,
-            sortOrder: 1,
+            title: 'Chương 3: Con Tàu Khởi Hành Lúc Nửa Đêm',
+            position: 1,
+            targetWords: 3000,
             scenes: [
               {
                 id: 1211,
                 chapterId: 121,
-                title: 'Scene 1: The Submerged Causeway',
+                title: 'Cảnh 1: Nhổ Neo Trong Đêm Sương',
+                summary:
+                  'Con thuyền rời bến Cửa Đại khi thủy triều lên cao và bắt gặp ánh sáng xanh từ đảo xa.',
                 content: scene4Prose,
                 sideNotes:
-                  'Midpoint sequence. Need sensory details of kelp, rusted iron mooring rings, and the distant foghorn interval from the breakwater.',
-                status: 'Idea',
-                povCharacterId: 102,
+                  'Chuẩn bị cao trào cuối Hồi II khi sương mù tách ra để lộ ngọn hải đăng cổ.',
+                status: 'Ý tưởng',
+                povCharacterId: 101,
                 locationId: 203,
-                characterIds: [101, 102, 103],
-                targetWords: 250,
+                targetWords: 1500,
                 wordCount: countWords(scene4Prose),
-                sortOrder: 1,
-                updatedAt: '2026-10-01T04:30:00Z',
+                position: 1,
+                updatedAt: '2026-10-01T12:00:00Z',
+                characterIds: [101, 102],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 2,
+    title: 'Mùa Gió Chướng Trên Đỉnh Ngự Bình',
+    author: 'Nguyễn Minh Khuê',
+    genre: 'Trinh thám Cổ trang',
+    synopsis:
+      'Một vị quan ngự sử trẻ tuổi điều tra vụ mất tích bí ẩn của bản khắc đồng Cửu Đỉnh giữa mùa mưa xứ Huế.',
+    targetWords: 60000,
+    updatedAt: '2026-10-01T10:00:00Z',
+    characters: [
+      {
+        id: 201,
+        projectId: 2,
+        name: 'Hoàng Trọng Khiêm',
+        role: 'Nhân vật chính',
+        description: 'Quan Ngự sử trẻ tuổi tại Kinh đô, sắc sảo và trọng chứng cứ.',
+      },
+    ],
+    locations: [
+      {
+        id: 301,
+        projectId: 2,
+        name: 'Tàng Thư Lâu',
+        description: 'Tòa lầu lưu trữ châu bản và họa đồ kiến trúc cổ nằm giữa hồ Học Hải.',
+      },
+    ],
+    acts: [
+      {
+        id: 21,
+        projectId: 2,
+        title: 'Hồi I — Dấu Ấn Trong Đêm Mưa',
+        position: 1,
+        chapters: [
+          {
+            id: 211,
+            actId: 21,
+            title: 'Chương 1: Bức Mật Thư Ở Tàng Thư Lâu',
+            position: 1,
+            targetWords: 3000,
+            scenes: [
+              {
+                id: 2111,
+                chapterId: 211,
+                title: 'Cảnh 1: Vết Mực Chưa Khô',
+                summary: 'Trọng Khiêm phát hiện tờ mật thư để lại trên án thư gỗ trắc.',
+                content:
+                  'Mưa Huế đổ trắng mặt hồ Học Hải. Trọng Khiêm khép cánh cửa gỗ lim của Tàng Thư Lâu, ánh nến soi rõ vết sáp ong vừa mới niêm phong trên phong thư...',
+                sideNotes: 'Mô tả kỹ âm thanh tiếng mưa rơi trên mái ngói lưu ly.',
+                status: 'Đang viết',
+                povCharacterId: 201,
+                locationId: 301,
+                targetWords: 1500,
+                wordCount: 33,
+                position: 1,
+                updatedAt: '2026-10-01T10:00:00Z',
+                characterIds: [201],
               },
             ],
           },
@@ -201,18 +269,11 @@ export const INITIAL_PROJECTS: Project[] = [
 ];
 
 export function compileProjectMarkdown(project: Project): string {
-  const charMap = new Map(project.characters.map((c) => [c.id, c.name]));
-  const locMap = new Map(project.locations.map((l) => [l.id, l.name]));
-
   const lines: string[] = [];
   lines.push(`# ${project.title}`);
   lines.push('');
-  if (project.author) {
-    lines.push(`**By ${project.author}**  `);
-  }
-  if (project.genre) {
-    lines.push(`*${project.genre}*`);
-  }
+  if (project.author) lines.push(`**Tác giả:** ${project.author}  `);
+  if (project.genre) lines.push(`**Thể loại:** ${project.genre}`);
   lines.push('');
   if (project.synopsis) {
     lines.push(`> ${project.synopsis}`);
@@ -222,32 +283,18 @@ export function compileProjectMarkdown(project: Project): string {
   lines.push('');
 
   for (const act of project.acts) {
-    lines.push(`# ${act.title}`);
+    lines.push(`## ${act.title}`);
     lines.push('');
     for (const chapter of act.chapters) {
-      lines.push(`## ${chapter.title}`);
+      lines.push(`### ${chapter.title}`);
       lines.push('');
       chapter.scenes.forEach((scene, idx) => {
-        lines.push(`### ${scene.title}`);
+        lines.push(`#### ${scene.title}`);
         lines.push('');
-        const meta: string[] = [`Status: ${scene.status}`];
-        if (scene.povCharacterId && charMap.has(scene.povCharacterId)) {
-          meta.push(`POV: ${charMap.get(scene.povCharacterId)}`);
+        if (scene.content.trim()) {
+          lines.push(scene.content.trim());
+          lines.push('');
         }
-        if (scene.locationId && locMap.has(scene.locationId)) {
-          meta.push(`Setting: ${locMap.get(scene.locationId)}`);
-        }
-        if (scene.characterIds.length > 0) {
-          const castNames = scene.characterIds
-            .map((id) => charMap.get(id))
-            .filter(Boolean)
-            .join(', ');
-          if (castNames) meta.push(`Cast: ${castNames}`);
-        }
-        lines.push(`> *${meta.join(' · ')}*`);
-        lines.push('');
-        lines.push(scene.content.trim());
-        lines.push('');
         if (idx < chapter.scenes.length - 1) {
           lines.push('* * *');
           lines.push('');
@@ -255,95 +302,57 @@ export function compileProjectMarkdown(project: Project): string {
       });
     }
   }
-
   return lines.join('\n');
 }
 
-function escapeHtml(raw: string): string {
-  return raw
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 export function compileProjectHTML(project: Project): string {
-  const charMap = new Map(project.characters.map((c) => [c.id, c.name]));
-  const locMap = new Map(project.locations.map((l) => [l.id, l.name]));
+  const esc = (str: string) =>
+    str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
 
   const parts: string[] = [];
   parts.push(`<!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${escapeHtml(project.title)} — Manuscript Export</title>
+<meta charset="UTF-8">
+<title>${esc(project.title)}</title>
 <style>
-  body {
-    max-width: 44rem;
-    margin: 4rem auto;
-    padding: 0 1.5rem;
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: 1.15rem;
-    line-height: 1.8;
-    color: #1c1b18;
-    background: #faf9f5;
-  }
-  header {
-    text-align: center;
-    margin-bottom: 4rem;
-    border-bottom: 1px solid #dcd9d0;
-    padding-bottom: 2.5rem;
-  }
-  h1.book-title { font-size: 2.75rem; margin: 0 0 0.5rem 0; font-weight: 600; }
-  .book-meta { font-family: sans-serif; font-size: 0.9rem; color: #68655e; }
-  h2.act-title {
-    font-size: 1.65rem;
-    margin-top: 4rem;
-    letter-spacing: 0.04em;
-    border-bottom: 1px solid #e5e2d9;
-    padding-bottom: 0.5rem;
-  }
-  h3.chapter-title { font-size: 1.4rem; margin-top: 2.5rem; }
-  h4.scene-title { font-size: 1.05rem; color: #57534e; margin: 1.75rem 0 0.35rem 0; font-family: sans-serif; }
-  .scene-meta { font-family: sans-serif; font-size: 0.8rem; color: #78716c; margin-bottom: 1.25rem; }
-  p { margin: 1rem 0; text-indent: 1.5rem; }
-  p.first-para { text-indent: 0; }
-  hr.scene-break { border: none; text-align: center; margin: 2.5rem 0; }
-  hr.scene-break::after { content: "* * *"; letter-spacing: 0.45rem; color: #78716c; }
+  body { font-family: 'Cormorant Garamond', 'Georgia', serif; max-width: 740px; margin: 3rem auto; padding: 0 1.5rem; color: #1C1B18; background: #FAF7F2; line-height: 1.8; }
+  h1 { font-size: 2.5rem; margin-bottom: 0.25rem; }
+  .meta { color: #57534E; font-style: italic; margin-bottom: 2rem; }
+  h2 { margin-top: 3rem; border-bottom: 1px solid #D6D0C4; padding-bottom: 0.4rem; }
+  h3 { margin-top: 2rem; color: #3F3C36; }
+  h4 { margin-top: 1.5rem; color: #78716C; font-weight: normal; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85rem; }
+  p { margin: 1.1rem 0; text-indent: 1.5rem; }
+  hr.scene-break { border: none; text-align: center; margin: 2rem 0; }
+  hr.scene-break::after { content: "* * *"; color: #78716C; letter-spacing: 0.4em; }
 </style>
 </head>
-<body>
-<header>
-  <h1 class="book-title">${escapeHtml(project.title)}</h1>
-  <div class="book-meta">By ${escapeHtml(project.author || 'Anonymous')} &middot; ${escapeHtml(project.genre || 'Novel')}</div>
-</header>`);
+<body>`);
+
+  parts.push(`<h1>${esc(project.title)}</h1>`);
+  parts.push(
+    `<div class="meta">Tác giả: ${esc(project.author || 'Khuyết danh')} &bull; Thể loại: ${esc(project.genre || 'Tiểu thuyết')}</div>`
+  );
 
   for (const act of project.acts) {
-    parts.push(`<h2 class="act-title">${escapeHtml(act.title)}</h2>`);
+    parts.push(`<h2>${esc(act.title)}</h2>`);
     for (const chapter of act.chapters) {
-      parts.push(`<h3 class="chapter-title">${escapeHtml(chapter.title)}</h3>`);
-      chapter.scenes.forEach((scene, sIdx) => {
-        const meta: string[] = [scene.status];
-        if (scene.povCharacterId && charMap.has(scene.povCharacterId)) {
-          meta.push(`POV: ${charMap.get(scene.povCharacterId)}`);
-        }
-        if (scene.locationId && locMap.has(scene.locationId)) {
-          meta.push(`Setting: ${locMap.get(scene.locationId)}`);
-        }
-        parts.push(`<h4 class="scene-title">${escapeHtml(scene.title)}</h4>`);
-        parts.push(`<div class="scene-meta">${escapeHtml(meta.join(' · '))}</div>`);
+      parts.push(`<h3>${esc(chapter.title)}</h3>`);
+      chapter.scenes.forEach((scene, idx) => {
+        parts.push(`<h4>${esc(scene.title)}</h4>`);
         const paragraphs = scene.content
           .trim()
           .split(/\n\s*\n/)
           .filter(Boolean);
-        paragraphs.forEach((p, pIdx) => {
-          parts.push(
-            `<p class="${pIdx === 0 ? 'first-para' : ''}">${escapeHtml(p.trim())}</p>`
-          );
-        });
-        if (sIdx < chapter.scenes.length - 1) {
-          parts.push(`<hr class="scene-break" />`);
+        for (const p of paragraphs) {
+          parts.push(`<p>${esc(p.trim())}</p>`);
+        }
+        if (idx < chapter.scenes.length - 1) {
+          parts.push(`<hr class="scene-break">`);
         }
       });
     }
@@ -353,64 +362,40 @@ export function compileProjectHTML(project: Project): string {
   return parts.join('\n');
 }
 
-function sqlString(val: string): string {
-  return `'${val.replace(/'/g, "''")}'`;
-}
-
 export function compileProjectSQLiteDump(project: Project): string {
+  const sqlEsc = (s: string) => s.replace(/'/g, "''");
   const lines: string[] = [];
-  lines.push('-- GoNovelist SQLite Data Export');
-  lines.push('-- Compatible with gonovelist/schema.sql and database.go');
+  lines.push('-- Bản sao lưu dữ liệu SQLite từ GoNovelist');
+  lines.push('PRAGMA foreign_keys = ON;');
   lines.push('BEGIN TRANSACTION;');
   lines.push('');
   lines.push(
-    `INSERT INTO projects (id, title, author, genre, synopsis, target_words) VALUES (${project.id}, ${sqlString(
-      project.title
-    )}, ${sqlString(project.author)}, ${sqlString(project.genre)}, ${sqlString(
-      project.synopsis
-    )}, ${project.targetWords});`
+    `INSERT INTO projects (id, title, author, genre, synopsis, target_words) VALUES (${project.id}, '${sqlEsc(project.title)}', '${sqlEsc(project.author)}', '${sqlEsc(project.genre)}', '${sqlEsc(project.synopsis)}', ${project.targetWords});`
   );
-  lines.push('');
 
   for (const c of project.characters) {
     lines.push(
-      `INSERT INTO characters (id, project_id, name, role, bio) VALUES (${c.id}, ${project.id}, ${sqlString(
-        c.name
-      )}, ${sqlString(c.role)}, ${sqlString(c.bio)});`
+      `INSERT INTO characters (id, project_id, name, role, description) VALUES (${c.id}, ${project.id}, '${sqlEsc(c.name)}', '${sqlEsc(c.role)}', '${sqlEsc(c.description)}');`
     );
   }
-  lines.push('');
-
   for (const l of project.locations) {
     lines.push(
-      `INSERT INTO locations (id, project_id, name, description) VALUES (${l.id}, ${project.id}, ${sqlString(
-        l.name
-      )}, ${sqlString(l.description)});`
+      `INSERT INTO locations (id, project_id, name, description) VALUES (${l.id}, ${project.id}, '${sqlEsc(l.name)}', '${sqlEsc(l.description)}');`
     );
   }
-  lines.push('');
-
   for (const act of project.acts) {
     lines.push(
-      `INSERT INTO acts (id, project_id, title, sort_order) VALUES (${act.id}, ${project.id}, ${sqlString(
-        act.title
-      )}, ${act.sortOrder});`
+      `INSERT INTO acts (id, project_id, title, position) VALUES (${act.id}, ${project.id}, '${sqlEsc(act.title)}', ${act.position});`
     );
     for (const ch of act.chapters) {
       lines.push(
-        `INSERT INTO chapters (id, act_id, title, target_words, sort_order) VALUES (${ch.id}, ${act.id}, ${sqlString(
-          ch.title
-        )}, ${ch.targetWords}, ${ch.sortOrder});`
+        `INSERT INTO chapters (id, act_id, title, position, target_words) VALUES (${ch.id}, ${act.id}, '${sqlEsc(ch.title)}', ${ch.position}, ${ch.targetWords});`
       );
       for (const sc of ch.scenes) {
-        const pov = sc.povCharacterId !== null ? sc.povCharacterId : 'NULL';
-        const loc = sc.locationId !== null ? sc.locationId : 'NULL';
+        const pov = sc.povCharacterId ?? 'NULL';
+        const loc = sc.locationId ?? 'NULL';
         lines.push(
-          `INSERT INTO scenes (id, chapter_id, title, content, side_notes, status, pov_character_id, location_id, target_words, word_count, sort_order) VALUES (${sc.id}, ${ch.id}, ${sqlString(
-            sc.title
-          )}, ${sqlString(sc.content)}, ${sqlString(sc.sideNotes)}, ${sqlString(
-            sc.status
-          )}, ${pov}, ${loc}, ${sc.targetWords}, ${sc.wordCount}, ${sc.sortOrder});`
+          `INSERT INTO scenes (id, chapter_id, title, summary, content, side_notes, status, pov_character_id, location_id, target_words, word_count, position) VALUES (${sc.id}, ${ch.id}, '${sqlEsc(sc.title)}', '${sqlEsc(sc.summary)}', '${sqlEsc(sc.content)}', '${sqlEsc(sc.sideNotes)}', '${sqlEsc(sc.status)}', ${pov}, ${loc}, ${sc.targetWords}, ${sc.wordCount}, ${sc.position});`
         );
         for (const cid of sc.characterIds) {
           lines.push(
@@ -420,7 +405,6 @@ export function compileProjectSQLiteDump(project: Project): string {
       }
     }
   }
-
   lines.push('');
   lines.push('COMMIT;');
   return lines.join('\n');

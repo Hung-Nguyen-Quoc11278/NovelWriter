@@ -4,9 +4,11 @@ import { Character, Location, Project } from '../types/novelist';
 
 interface WorldCastViewProps {
   project: Project;
-  onAddCharacter: (name: string, role: Character['role'], bio: string) => void;
+  onAddCharacter: (name: string, role: string, description: string) => void;
+  onUpdateCharacter: (character: Character) => void;
   onDeleteCharacter: (id: number) => void;
   onAddLocation: (name: string, description: string) => void;
+  onUpdateLocation: (location: Location) => void;
   onDeleteLocation: (id: number) => void;
   onSelectScene: (sceneId: number) => void;
 }
@@ -14,280 +16,306 @@ interface WorldCastViewProps {
 export const WorldCastView: React.FC<WorldCastViewProps> = ({
   project,
   onAddCharacter,
+  onUpdateCharacter,
   onDeleteCharacter,
   onAddLocation,
+  onUpdateLocation,
   onDeleteLocation,
   onSelectScene,
 }) => {
-  const [charName, setCharName] = useState('');
-  const [charRole, setCharRole] = useState<Character['role']>('Supporting');
-  const [charBio, setCharBio] = useState('');
+  const [newCharName, setNewCharName] = useState('');
+  const [newCharRole, setNewCharRole] = useState('Nhân vật chính');
+  const [newCharDesc, setNewCharDesc] = useState('');
 
-  const [locName, setLocName] = useState('');
-  const [locDesc, setLocDesc] = useState('');
+  const [newLocName, setNewLocName] = useState('');
+  const [newLocDesc, setNewLocDesc] = useState('');
 
   const allScenes = project.acts.flatMap((a) =>
     a.chapters.flatMap((c) =>
-      c.scenes.map((s) => ({
-        ...s,
-        actTitle: a.title,
+      c.scenes.map((sc) => ({
+        ...sc,
         chapterTitle: c.title,
+        actTitle: a.title,
       }))
     )
   );
 
-  const handleCreateChar = (e: React.FormEvent) => {
+  const handleCreateCharacter = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!charName.trim()) return;
-    onAddCharacter(charName.trim(), charRole, charBio.trim());
-    setCharName('');
-    setCharBio('');
+    if (!newCharName.trim()) return;
+    onAddCharacter(newCharName.trim(), newCharRole.trim() || 'Nhân vật phụ', newCharDesc.trim());
+    setNewCharName('');
+    setNewCharDesc('');
   };
 
-  const handleCreateLoc = (e: React.FormEvent) => {
+  const handleCreateLocation = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!locName.trim()) return;
-    onAddLocation(locName.trim(), locDesc.trim());
-    setLocName('');
-    setLocDesc('');
+    if (!newLocName.trim()) return;
+    onAddLocation(newLocName.trim(), newLocDesc.trim());
+    setNewLocName('');
+    setNewLocDesc('');
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8 space-y-12">
-      <div className="border-b border-[#E6E4DD] pb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <p className="text-xs text-[#68655E] mb-1">
-            Context &amp; Metadata Registry · {project.title}
-          </p>
-          <h1 className="text-3xl font-semibold text-[#1C1B18] text-balance">
-            Dramatis Personae &amp; World Settings
-          </h1>
+    <div className="flex-1 overflow-y-auto bg-[#FAF7F2] px-8 py-8">
+      <div className="max-w-6xl mx-auto space-y-12">
+        {/* Tiêu đề trang */}
+        <div className="border-b border-[#D6D0C4] pb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.14em] text-[#78716C] font-semibold">
+              Hồ Sơ Thế Giới & Nhân Vật (SQLite: characters, locations, scene_characters)
+            </p>
+            <h1 className="font-serif-display text-3xl md:text-4xl font-bold text-[#1C1B18] mt-1">
+              Danh Bạ Nhân Vật & Bối Cảnh — {project.title}
+            </h1>
+          </div>
+          <div className="flex items-center gap-6 text-xs font-mono-code text-[#57534E]">
+            <span>{project.characters.length} Nhân vật</span>
+            <span>&bull;</span>
+            <span>{project.locations.length} Bối cảnh</span>
+            <span>&bull;</span>
+            <span>{allScenes.length} Cảnh có liên kết</span>
+          </div>
         </div>
-        <div className="text-xs text-[#68655E] font-mono tabular-nums">
-          <span>{project.characters.length} Cast Members</span>
-          <span className="mx-2" aria-hidden="true">·</span>
-          <span>{project.locations.length} Locations</span>
-          <span className="mx-2" aria-hidden="true">·</span>
-          <span>{allScenes.length} Total Scenes</span>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+          {/* Cột Nhân vật */}
+          <div className="lg:col-span-7 space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="font-serif-display text-2xl font-bold text-[#1C1B18]">
+                Danh Sách Nhân Vật (Dramatis Personae)
+              </h2>
+              <span className="text-xs font-mono-code text-[#78716C]">
+                Gắn với Góc nhìn (POV) & Nhân vật xuất hiện trong Cảnh
+              </span>
+            </div>
+
+            {/* Biểu mẫu thêm nhân vật */}
+            <form
+              onSubmit={handleCreateCharacter}
+              className="bg-[#F3EFE6] border border-[#D6D0C4] p-5 space-y-4"
+            >
+              <div className="text-xs uppercase tracking-[0.08em] font-semibold text-[#57534E]">
+                Thêm Nhân Vật Mới
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <input
+                  type="text"
+                  value={newCharName}
+                  onChange={(e) => setNewCharName(e.target.value)}
+                  placeholder="Họ và tên nhân vật..."
+                  className="sm:col-span-2 bg-[#FAF7F2] border border-[#D6D0C4] px-3 py-2 text-sm text-[#1C1B18] focus:outline-none focus:border-[#8B3A2B]"
+                />
+                <input
+                  type="text"
+                  value={newCharRole}
+                  onChange={(e) => setNewCharRole(e.target.value)}
+                  placeholder="Vai trò (VD: Nhân vật chính)"
+                  className="bg-[#FAF7F2] border border-[#D6D0C4] px-3 py-2 text-sm text-[#1C1B18] focus:outline-none focus:border-[#8B3A2B]"
+                />
+              </div>
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={newCharDesc}
+                  onChange={(e) => setNewCharDesc(e.target.value)}
+                  placeholder="Tiểu sử ngắn, ngoại hình, động cơ hoặc bí mật..."
+                  className="flex-1 bg-[#FAF7F2] border border-[#D6D0C4] px-3 py-2 text-sm text-[#1C1B18] focus:outline-none focus:border-[#8B3A2B]"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1.5 bg-[#8B3A2B] text-[#FAF7F2] px-4 py-2 text-xs font-medium tracking-wide hover:bg-[#722E21] transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Thêm Nhân Vật
+                </button>
+              </div>
+            </form>
+
+            {/* Danh sách thẻ nhân vật */}
+            <div className="space-y-4">
+              {project.characters.map((char) => {
+                const povScenes = allScenes.filter((s) => s.povCharacterId === char.id);
+                const presentScenes = allScenes.filter((s) =>
+                  s.characterIds.includes(char.id)
+                );
+
+                return (
+                  <div
+                    key={char.id}
+                    className="bg-[#FAF7F2] border border-[#D6D0C4] p-5 space-y-3 transition-colors hover:border-[#78716C]"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <input
+                          type="text"
+                          value={char.name}
+                          onChange={(e) =>
+                            onUpdateCharacter({ ...char, name: e.target.value })
+                          }
+                          className="sm:col-span-2 font-serif-display text-xl font-bold text-[#1C1B18] bg-transparent border-b border-transparent focus:border-[#8B3A2B] focus:outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={char.role}
+                          onChange={(e) =>
+                            onUpdateCharacter({ ...char, role: e.target.value })
+                          }
+                          className="text-xs font-mono-code uppercase tracking-wider text-[#8B3A2B] bg-transparent border-b border-transparent focus:border-[#8B3A2B] focus:outline-none sm:text-right"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteCharacter(char.id)}
+                        title="Xóa nhân vật"
+                        className="text-[#78716C] hover:text-[#991B1B] p-1 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <textarea
+                      rows={2}
+                      value={char.description}
+                      onChange={(e) =>
+                        onUpdateCharacter({ ...char, description: e.target.value })
+                      }
+                      placeholder="Ghi chú về nhân vật..."
+                      className="w-full text-sm text-[#57534E] bg-transparent border border-transparent focus:border-[#D6D0C4] focus:bg-[#F3EFE6]/50 p-1.5 focus:outline-none resize-none"
+                    />
+
+                    <div className="pt-2 border-t border-[#E6E0D4] flex flex-wrap items-center justify-between gap-2 text-xs text-[#78716C]">
+                      <div className="font-mono-code">
+                        Góc nhìn (POV) trong <strong>{povScenes.length}</strong> cảnh &bull; Xuất hiện trong{' '}
+                        <strong>{presentScenes.length}</strong> cảnh
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {presentScenes.slice(0, 3).map((sc) => (
+                          <button
+                            key={sc.id}
+                            type="button"
+                            onClick={() => onSelectScene(sc.id)}
+                            className="inline-flex items-center gap-1 text-[11px] bg-[#F3EFE6] hover:bg-[#E8E2D5] text-[#1C1B18] px-2 py-0.5 border border-[#D6D0C4] transition-colors cursor-pointer"
+                          >
+                            <span>{sc.title}</span>
+                            <ArrowUpRight className="w-3 h-3 text-[#78716C]" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Cột Bối cảnh / Địa điểm */}
+          <div className="lg:col-span-5 space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="font-serif-display text-2xl font-bold text-[#1C1B18]">
+                Bối Cảnh & Địa Điểm
+              </h2>
+              <span className="text-xs font-mono-code text-[#78716C]">
+                Không gian diễn ra các Cảnh
+              </span>
+            </div>
+
+            {/* Biểu mẫu thêm địa điểm */}
+            <form
+              onSubmit={handleCreateLocation}
+              className="bg-[#F3EFE6] border border-[#D6D0C4] p-5 space-y-3"
+            >
+              <div className="text-xs uppercase tracking-[0.08em] font-semibold text-[#57534E]">
+                Thêm Địa Điểm / Bối Cảnh Mới
+              </div>
+              <input
+                type="text"
+                value={newLocName}
+                onChange={(e) => setNewLocName(e.target.value)}
+                placeholder="Tên địa điểm (VD: Xưởng Thủy Tinh Phố Cổ)..."
+                className="w-full bg-[#FAF7F2] border border-[#D6D0C4] px-3 py-2 text-sm text-[#1C1B18] focus:outline-none focus:border-[#8B3A2B]"
+              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newLocDesc}
+                  onChange={(e) => setNewLocDesc(e.target.value)}
+                  placeholder="Chi tiết không gian, ánh sáng, âm thanh..."
+                  className="flex-1 bg-[#FAF7F2] border border-[#D6D0C4] px-3 py-2 text-sm text-[#1C1B18] focus:outline-none focus:border-[#8B3A2B]"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1.5 bg-[#1C1B18] text-[#FAF7F2] px-4 py-2 text-xs font-medium tracking-wide hover:bg-[#3A3832] transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Thêm
+                </button>
+              </div>
+            </form>
+
+            {/* Danh sách thẻ địa điểm */}
+            <div className="space-y-4">
+              {project.locations.map((loc) => {
+                const scenesHere = allScenes.filter((s) => s.locationId === loc.id);
+                return (
+                  <div
+                    key={loc.id}
+                    className="bg-[#FAF7F2] border border-[#D6D0C4] p-5 space-y-3 transition-colors hover:border-[#78716C]"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <input
+                        type="text"
+                        value={loc.name}
+                        onChange={(e) =>
+                          onUpdateLocation({ ...loc, name: e.target.value })
+                        }
+                        className="flex-1 font-serif-display text-xl font-bold text-[#1C1B18] bg-transparent border-b border-transparent focus:border-[#8B3A2B] focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onDeleteLocation(loc.id)}
+                        title="Xóa địa điểm"
+                        className="text-[#78716C] hover:text-[#991B1B] p-1 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <textarea
+                      rows={2}
+                      value={loc.description}
+                      onChange={(e) =>
+                        onUpdateLocation({ ...loc, description: e.target.value })
+                      }
+                      placeholder="Mô tả chi tiết kiến trúc, khí hậu, cảm xúc không gian..."
+                      className="w-full text-sm text-[#57534E] bg-transparent border border-transparent focus:border-[#D6D0C4] focus:bg-[#F3EFE6]/50 p-1.5 focus:outline-none resize-none"
+                    />
+
+                    <div className="pt-2 border-t border-[#E6E0D4] flex flex-wrap items-center justify-between gap-2 text-xs text-[#78716C]">
+                      <span className="font-mono-code">
+                        Sử dụng trong <strong>{scenesHere.length}</strong> cảnh
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {scenesHere.map((sc) => (
+                          <button
+                            key={sc.id}
+                            type="button"
+                            onClick={() => onSelectScene(sc.id)}
+                            className="inline-flex items-center gap-1 text-[11px] bg-[#F3EFE6] hover:bg-[#E8E2D5] text-[#1C1B18] px-2 py-0.5 border border-[#D6D0C4] transition-colors cursor-pointer"
+                          >
+                            <span>{sc.title}</span>
+                            <ArrowUpRight className="w-3 h-3 text-[#78716C]" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
-
-      {/* Characters Section */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        <div className="lg:col-span-4 border border-[#E6E4DD] bg-[#F1EFEA]/60 rounded-xl p-5">
-          <h2 className="text-xl font-semibold text-[#1C1B18] mb-1">
-            Register Cast Character
-          </h2>
-          <p className="text-xs text-[#68655E] mb-4">
-            Characters added here become selectable as Scene POV or scene participants.
-          </p>
-          <form onSubmit={handleCreateChar} className="space-y-3.5">
-            <div>
-              <label className="block text-xs font-medium text-[#1C1B18] mb-1">
-                Full Name
-              </label>
-              <input
-                type="text"
-                value={charName}
-                onChange={(e) => setCharName(e.target.value)}
-                placeholder="e.g., Sister Beatrice Vane"
-                className="w-full px-3 py-2 text-sm bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[#1C1B18] mb-1">
-                Narrative Role
-              </label>
-              <select
-                value={charRole}
-                onChange={(e) => setCharRole(e.target.value as Character['role'])}
-                className="w-full px-3 py-2 text-sm bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
-              >
-                <option value="Protagonist">Protagonist</option>
-                <option value="Deuteragonist">Deuteragonist</option>
-                <option value="Antagonist">Antagonist</option>
-                <option value="Supporting">Supporting</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[#1C1B18] mb-1">
-                Character Dossier &amp; Voice Notes
-              </label>
-              <textarea
-                rows={3}
-                value={charBio}
-                onChange={(e) => setCharBio(e.target.value)}
-                placeholder="Motivations, speech cadence, physical details..."
-                className="w-full px-3 py-2 text-sm bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#1E3A5F] rounded-lg hover:bg-[#162B47] transition-colors whitespace-nowrap"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add to Cast Registry
-            </button>
-          </form>
-        </div>
-
-        <div className="lg:col-span-8 space-y-4">
-          {project.characters.map((char) => {
-            const povScenes = allScenes.filter((s) => s.povCharacterId === char.id);
-            const presentScenes = allScenes.filter((s) =>
-              s.characterIds.includes(char.id)
-            );
-
-            return (
-              <div
-                key={char.id}
-                className="border border-[#E6E4DD] bg-white rounded-xl p-5 flex flex-col justify-between gap-4"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 className="text-lg font-semibold text-[#1C1B18]">
-                      {char.name}
-                    </h3>
-                    <div className="flex items-center gap-2 text-xs text-[#68655E] mt-0.5 font-mono tabular-nums">
-                      <span>{char.role}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>POV in {povScenes.length} scenes</span>
-                      <span aria-hidden="true">·</span>
-                      <span>Present in {presentScenes.length} scenes</span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => onDeleteCharacter(char.id)}
-                    title="Remove character"
-                    className="p-1.5 text-[#68655E] hover:text-red-700 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {char.bio && (
-                  <p className="text-sm text-[#3A3832] leading-relaxed">
-                    {char.bio}
-                  </p>
-                )}
-
-                {presentScenes.length > 0 && (
-                  <div className="pt-3 border-t border-[#F1EFEA] flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-                    <span className="text-[#68655E] font-medium">Scene Appearances:</span>
-                    {presentScenes.map((sc) => (
-                      <button
-                        key={sc.id}
-                        onClick={() => onSelectScene(sc.id)}
-                        className="inline-flex items-center gap-1 text-[#1E3A5F] hover:underline font-medium whitespace-nowrap"
-                      >
-                        <span>{sc.title}</span>
-                        <ArrowUpRight className="w-3 h-3" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Locations Section */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start pt-6 border-t border-[#E6E4DD]">
-        <div className="lg:col-span-4 border border-[#E6E4DD] bg-[#F1EFEA]/60 rounded-xl p-5">
-          <h2 className="text-xl font-semibold text-[#1C1B18] mb-1">
-            Register World Location
-          </h2>
-          <p className="text-xs text-[#68655E] mb-4">
-            Settings and architectural backdrops mapped to individual scenes.
-          </p>
-          <form onSubmit={handleCreateLoc} className="space-y-3.5">
-            <div>
-              <label className="block text-xs font-medium text-[#1C1B18] mb-1">
-                Location / Setting Name
-              </label>
-              <input
-                type="text"
-                value={locName}
-                onChange={(e) => setLocName(e.target.value)}
-                placeholder="e.g., The Submerged Breakwater"
-                className="w-full px-3 py-2 text-sm bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[#1C1B18] mb-1">
-                Sensory &amp; Architectural Notes
-              </label>
-              <textarea
-                rows={3}
-                value={locDesc}
-                onChange={(e) => setLocDesc(e.target.value)}
-                placeholder="Lighting, acoustics, weather, historical context..."
-                className="w-full px-3 py-2 text-sm bg-white border border-[#DCD9D0] rounded-lg focus:outline-none focus:border-[#1E3A5F]"
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#1E3A5F] rounded-lg hover:bg-[#162B47] transition-colors whitespace-nowrap"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add to Location Atlas
-            </button>
-          </form>
-        </div>
-
-        <div className="lg:col-span-8 space-y-4">
-          {project.locations.map((loc) => {
-            const linkedScenes = allScenes.filter((s) => s.locationId === loc.id);
-            return (
-              <div
-                key={loc.id}
-                className="border border-[#E6E4DD] bg-white rounded-xl p-5 flex flex-col justify-between gap-4"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 className="text-lg font-semibold text-[#1C1B18]">
-                      {loc.name}
-                    </h3>
-                    <div className="text-xs text-[#68655E] mt-0.5 font-mono tabular-nums">
-                      Active setting in {linkedScenes.length} scenes
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => onDeleteLocation(loc.id)}
-                    title="Remove location"
-                    className="p-1.5 text-[#68655E] hover:text-red-700 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {loc.description && (
-                  <p className="text-sm text-[#3A3832] leading-relaxed">
-                    {loc.description}
-                  </p>
-                )}
-
-                {linkedScenes.length > 0 && (
-                  <div className="pt-3 border-t border-[#F1EFEA] flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-                    <span className="text-[#68655E] font-medium">Scenes Set Here:</span>
-                    {linkedScenes.map((sc) => (
-                      <button
-                        key={sc.id}
-                        onClick={() => onSelectScene(sc.id)}
-                        className="inline-flex items-center gap-1 text-[#1E3A5F] hover:underline font-medium whitespace-nowrap"
-                      >
-                        <span>{sc.title}</span>
-                        <ArrowUpRight className="w-3 h-3" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
     </div>
   );
 };
