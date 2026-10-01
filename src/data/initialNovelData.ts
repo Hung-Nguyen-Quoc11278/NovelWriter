@@ -36,6 +36,12 @@ export const INITIAL_PROJECTS: Project[] = [
       'Một nghệ nhân phục chế cổ vật tại thương cảng Hội An thế kỷ XIX phát hiện tấm hải đồ khắc ẩn trong thấu kính thủy tinh của ngọn hải đăng cổ.',
     targetWords: 45000,
     updatedAt: '2026-10-01T12:00:00Z',
+    tags: [
+      { id: 1, bookId: 1, name: 'Cổ vật' },
+      { id: 2, bookId: 1, name: 'Khu vực cấm' },
+      { id: 3, bookId: 1, name: 'Thiên giới' },
+      { id: 4, bookId: 1, name: 'Bí mật triều đình' },
+    ],
     characters: [
       {
         id: 101,
@@ -44,6 +50,7 @@ export const INITIAL_PROJECTS: Project[] = [
         role: 'Nhân vật chính',
         description:
           'Nghệ nhân chế tác và phục chế thấu kính tại phố cổ Hội An, am hiểu quang học cổ truyền và thư tịch Hán Nôm.',
+        tagIds: [1, 4],
       },
       {
         id: 102,
@@ -52,6 +59,7 @@ export const INITIAL_PROJECTS: Project[] = [
         role: 'Đồng hành',
         description:
           'Thuyền trưởng tàu buôn từng đi qua vùng biển sương mù Nam Hải, giỏi thiên văn hàng hải và đọc hướng gió.',
+        tagIds: [2],
       },
       {
         id: 103,
@@ -60,6 +68,7 @@ export const INITIAL_PROJECTS: Project[] = [
         role: 'Người dẫn đường',
         description:
           'Người trông coi kho thư tịch cổ tại hội quán, nắm giữ cuốn nhật ký hàng hải bị thất truyền.',
+        tagIds: [3, 4],
       },
     ],
     locations: [
@@ -69,6 +78,7 @@ export const INITIAL_PROJECTS: Project[] = [
         name: 'Xưởng Thủy Tinh Phố Cổ',
         description:
           'Căn gác gỗ nhìn ra sông Thu Bồn với những lò nung pha lê, bàn mài thấu kính và đèn dầu lạc.',
+        tagIds: [1],
       },
       {
         id: 202,
@@ -76,6 +86,7 @@ export const INITIAL_PROJECTS: Project[] = [
         name: 'Thư Các Chùa Cầu',
         description:
           'Căn phòng lưu trữ bản đồ hàng hải, la bàn cổ và nhật ký thương thuyền trăm năm.',
+        tagIds: [2, 4],
       },
       {
         id: 203,
@@ -83,6 +94,50 @@ export const INITIAL_PROJECTS: Project[] = [
         name: 'Bến Thuyền Cửa Đại',
         description:
           'Cửa biển sương mù nơi sông Thu Bồn đổ ra biển lớn, điểm xuất phát của những chuyến hải trình đêm.',
+        tagIds: [2],
+      },
+    ],
+    props: [
+      {
+        id: 301,
+        bookId: 1,
+        name: 'Thấu Kính Hải Đăng Cổ',
+        category: 'Báu vật quang học',
+        description:
+          'Phiến pha lê thế kỷ XVII có vết rạn ẩn chứa hải đồ ra đảo sương mù.',
+        significance:
+          'Chìa khóa duy nhất giải mã luồng lạch qua rạn đá ngầm Nam Hải.',
+        tagIds: [1, 3],
+      },
+      {
+        id: 302,
+        bookId: 1,
+        name: 'La Bàn Đồng Khắc Chữ Chu Sa',
+        category: 'Khí cụ hàng hải',
+        description:
+          'Chiếc la bàn đồng cổ của thuyền trưởng Trần Đình Bách có kim chỉ hướng lệch theo từ trường đảo ngầm.',
+        significance: 'Định vị phương vị Sao Khuê trong đêm sương mù.',
+        tagIds: [1],
+      },
+    ],
+    events: [
+      {
+        id: 401,
+        bookId: 1,
+        title: 'Vụ Mất Tích Đội Thương Thuyền 80 Năm Trước',
+        timelineOrder: 1,
+        description:
+          'Đội thuyền chở cặp thấu kính song sinh biến mất trong màn sương ngoài khơi Cù Lao Chàm.',
+        tagIds: [2, 4],
+      },
+      {
+        id: 402,
+        bookId: 1,
+        title: 'Đêm Thủy Triều Thấp Rằm Tháng Tám',
+        timelineOrder: 2,
+        description:
+          'Thời khắc rạn đá ngầm lộ diện và ngọn hải đăng cổ phát tín hiệu xanh biếc.',
+        tagIds: [2, 3],
       },
     ],
     acts: [
@@ -116,6 +171,8 @@ export const INITIAL_PROJECTS: Project[] = [
                 position: 1,
                 updatedAt: '2026-10-01T11:30:00Z',
                 characterIds: [101, 102],
+                propIds: [301, 302],
+                eventIds: [401],
               },
               {
                 id: 1112,
@@ -134,6 +191,8 @@ export const INITIAL_PROJECTS: Project[] = [
                 position: 2,
                 updatedAt: '2026-10-01T11:45:00Z',
                 characterIds: [101, 102, 103],
+                propIds: [301],
+                eventIds: [401, 402],
               },
             ],
           },
@@ -161,6 +220,8 @@ export const INITIAL_PROJECTS: Project[] = [
                 position: 1,
                 updatedAt: '2026-10-01T11:50:00Z',
                 characterIds: [101, 102],
+                propIds: [302],
+                eventIds: [402],
               },
             ],
           },
@@ -196,6 +257,8 @@ export const INITIAL_PROJECTS: Project[] = [
                 position: 1,
                 updatedAt: '2026-10-01T12:00:00Z',
                 characterIds: [101, 102],
+                propIds: [301, 302],
+                eventIds: [402],
               },
             ],
           },
@@ -212,6 +275,10 @@ export const INITIAL_PROJECTS: Project[] = [
       'Một vị quan ngự sử trẻ tuổi điều tra vụ mất tích bí ẩn của bản khắc đồng Cửu Đỉnh giữa mùa mưa xứ Huế.',
     targetWords: 60000,
     updatedAt: '2026-10-01T10:00:00Z',
+    tags: [
+      { id: 11, bookId: 2, name: 'Bí mật triều đình' },
+      { id: 12, bookId: 2, name: 'Cổ vật' },
+    ],
     characters: [
       {
         id: 201,
@@ -219,6 +286,7 @@ export const INITIAL_PROJECTS: Project[] = [
         name: 'Hoàng Trọng Khiêm',
         role: 'Nhân vật chính',
         description: 'Quan Ngự sử trẻ tuổi tại Kinh đô, sắc sảo và trọng chứng cứ.',
+        tagIds: [11],
       },
     ],
     locations: [
@@ -227,6 +295,28 @@ export const INITIAL_PROJECTS: Project[] = [
         projectId: 2,
         name: 'Tàng Thư Lâu',
         description: 'Tòa lầu lưu trữ châu bản và họa đồ kiến trúc cổ nằm giữa hồ Học Hải.',
+        tagIds: [11, 12],
+      },
+    ],
+    props: [
+      {
+        id: 351,
+        bookId: 2,
+        name: 'Ấn Đồng Ngự Sử Đài',
+        category: 'Tín vật triều đình',
+        description: 'Chiếc ấn đồng khắc chữ triện cho phép tra cứu mật档 trong Tàng Thư Lâu.',
+        significance: 'Chứng thực quyền điều tra độc lập của Trọng Khiêm.',
+        tagIds: [11, 12],
+      },
+    ],
+    events: [
+      {
+        id: 451,
+        bookId: 2,
+        title: 'Đêm Mất Tích Bản Khắc Cửu Đỉnh',
+        timelineOrder: 1,
+        description: 'Bản vẽ gốc của Cao Đỉnh biến mất khỏi Tàng Thư Lâu trong đêm mưa lớn.',
+        tagIds: [11],
       },
     ],
     acts: [
@@ -259,6 +349,8 @@ export const INITIAL_PROJECTS: Project[] = [
                 position: 1,
                 updatedAt: '2026-10-01T10:00:00Z',
                 characterIds: [201],
+                propIds: [351],
+                eventIds: [451],
               },
             ],
           },
@@ -365,7 +457,7 @@ export function compileProjectHTML(project: Project): string {
 export function compileProjectSQLiteDump(project: Project): string {
   const sqlEsc = (s: string) => s.replace(/'/g, "''");
   const lines: string[] = [];
-  lines.push('-- Bản sao lưu dữ liệu SQLite từ GoNovelist');
+  lines.push('-- Bản sao lưu dữ liệu SQLite từ GoNovelist (Bao gồm Props, Events, Tags)');
   lines.push('PRAGMA foreign_keys = ON;');
   lines.push('BEGIN TRANSACTION;');
   lines.push('');
@@ -373,15 +465,50 @@ export function compileProjectSQLiteDump(project: Project): string {
     `INSERT INTO projects (id, title, author, genre, synopsis, target_words) VALUES (${project.id}, '${sqlEsc(project.title)}', '${sqlEsc(project.author)}', '${sqlEsc(project.genre)}', '${sqlEsc(project.synopsis)}', ${project.targetWords});`
   );
 
+  for (const t of project.tags || []) {
+    lines.push(
+      `INSERT INTO tags (id, book_id, name) VALUES (${t.id}, ${project.id}, '${sqlEsc(t.name)}');`
+    );
+  }
   for (const c of project.characters) {
     lines.push(
       `INSERT INTO characters (id, project_id, name, role, description) VALUES (${c.id}, ${project.id}, '${sqlEsc(c.name)}', '${sqlEsc(c.role)}', '${sqlEsc(c.description)}');`
     );
+    for (const tid of c.tagIds || []) {
+      lines.push(
+        `INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ('character', ${c.id}, ${tid});`
+      );
+    }
   }
   for (const l of project.locations) {
     lines.push(
       `INSERT INTO locations (id, project_id, name, description) VALUES (${l.id}, ${project.id}, '${sqlEsc(l.name)}', '${sqlEsc(l.description)}');`
     );
+    for (const tid of l.tagIds || []) {
+      lines.push(
+        `INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ('location', ${l.id}, ${tid});`
+      );
+    }
+  }
+  for (const p of project.props || []) {
+    lines.push(
+      `INSERT INTO props (id, book_id, name, category, description, significance) VALUES (${p.id}, ${project.id}, '${sqlEsc(p.name)}', '${sqlEsc(p.category)}', '${sqlEsc(p.description)}', '${sqlEsc(p.significance)}');`
+    );
+    for (const tid of p.tagIds || []) {
+      lines.push(
+        `INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ('prop', ${p.id}, ${tid});`
+      );
+    }
+  }
+  for (const ev of project.events || []) {
+    lines.push(
+      `INSERT INTO events (id, book_id, title, timeline_order, description) VALUES (${ev.id}, ${project.id}, '${sqlEsc(ev.title)}', ${ev.timelineOrder}, '${sqlEsc(ev.description)}');`
+    );
+    for (const tid of ev.tagIds || []) {
+      lines.push(
+        `INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ('event', ${ev.id}, ${tid});`
+      );
+    }
   }
   for (const act of project.acts) {
     lines.push(
@@ -400,6 +527,16 @@ export function compileProjectSQLiteDump(project: Project): string {
         for (const cid of sc.characterIds) {
           lines.push(
             `INSERT INTO scene_characters (scene_id, character_id) VALUES (${sc.id}, ${cid});`
+          );
+        }
+        for (const pid of sc.propIds || []) {
+          lines.push(
+            `INSERT INTO scene_props (scene_id, prop_id) VALUES (${sc.id}, ${pid});`
+          );
+        }
+        for (const eid of sc.eventIds || []) {
+          lines.push(
+            `INSERT INTO scene_events (scene_id, event_id) VALUES (${sc.id}, ${eid});`
           );
         }
       }

@@ -17,6 +17,16 @@ const (
 	StatusEdited    SceneStatus = "Đã biên tập"
 )
 
+// EntityType định danh loại thực thể trong bảng ánh xạ thẻ đa năng (entity_tags).
+type EntityType string
+
+const (
+	EntityCharacter EntityType = "character"
+	EntityLocation  EntityType = "location"
+	EntityProp      EntityType = "prop"
+	EntityEvent     EntityType = "event"
+)
+
 // AllSceneStatuses trả về danh sách các trạng thái chuẩn tiếng Việt cho UI.
 func AllSceneStatuses() []string {
 	return []string{
@@ -43,7 +53,7 @@ func NormalizeStatus(raw SceneStatus) SceneStatus {
 	}
 }
 
-// Project đại diện cho một dự án tiểu thuyết / tác phẩm.
+// Project đại diện cho một dự án tiểu thuyết / tác phẩm (Book).
 type Project struct {
 	ID          int64
 	Title       string
@@ -74,7 +84,54 @@ type Chapter struct {
 	CreatedAt   time.Time
 }
 
-// Scene là đơn vị viết chính chứa nội dung văn xuôi, ghi chú bên lề và siêu dữ liệu.
+// Tag đại diện cho một Thẻ phân loại đa năng trong tác phẩm (Ví dụ: "Thiên giới", "Khu vực cấm").
+type Tag struct {
+	ID     int64
+	BookID int64
+	Name   string
+}
+
+// Character đại diện cho một Nhân vật trong dự án tiểu thuyết.
+type Character struct {
+	ID          int64
+	ProjectID   int64
+	Name        string
+	Role        string
+	Description string
+	Tags        []Tag
+}
+
+// Location đại diện cho một Bối cảnh / Địa điểm trong dự án tiểu thuyết.
+type Location struct {
+	ID          int64
+	ProjectID   int64
+	Name        string
+	Description string
+	Tags        []Tag
+}
+
+// Prop đại diện cho một Vật phẩm / Đạo cụ quan trọng trong thế giới tiểu thuyết.
+type Prop struct {
+	ID           int64
+	BookID       int64
+	Name         string
+	Category     string
+	Description  string
+	Significance string
+	Tags         []Tag
+}
+
+// Event đại diện cho một Sự kiện lịch sử / cốt truyện theo dòng thời gian.
+type Event struct {
+	ID            int64
+	BookID        int64
+	Title         string
+	TimelineOrder int
+	Description   string
+	Tags          []Tag
+}
+
+// Scene là đơn vị viết chính chứa nội dung văn xuôi, ghi chú bên lề và siêu dữ liệu ngữ cảnh.
 type Scene struct {
 	ID             int64
 	ChapterID      int64
@@ -90,23 +147,8 @@ type Scene struct {
 	Position       int
 	UpdatedAt      time.Time
 	CharacterIDs   []int64
-}
-
-// Character đại diện cho một Nhân vật trong dự án tiểu thuyết.
-type Character struct {
-	ID          int64
-	ProjectID   int64
-	Name        string
-	Role        string
-	Description string
-}
-
-// Location đại diện cho một Bối cảnh / Địa điểm trong dự án tiểu thuyết.
-type Location struct {
-	ID          int64
-	ProjectID   int64
-	Name        string
-	Description string
+	PropIDs        []int64
+	EventIDs       []int64
 }
 
 // HierarchyNode biểu diễn một nút trên cây phân cấp (Hồi, Chương, hoặc Cảnh).
@@ -158,4 +200,29 @@ func CountWords(text string) int {
 		}
 	}
 	return count
+}
+
+// FormatTagNames ghép danh sách thẻ thành chuỗi hiển thị ngắn gọn (VD: "#Cổ vật, #Khu vực cấm").
+func FormatTagNames(tags []Tag) string {
+	if len(tags) == 0 {
+		return "Chưa gắn thẻ"
+	}
+	names := make([]string, len(tags))
+	for i, t := range tags {
+		names[i] = "#" + t.Name
+	}
+	return strings.Join(names, "  ")
+}
+
+// HasTagName kiểm tra xem danh sách thẻ có chứa thẻ tên cụ thể hay không.
+func HasTagName(tags []Tag, filterTag string) bool {
+	if filterTag == "" || filterTag == "Tất cả thẻ" {
+		return true
+	}
+	for _, t := range tags {
+		if t.Name == filterTag {
+			return true
+		}
+	}
+	return false
 }

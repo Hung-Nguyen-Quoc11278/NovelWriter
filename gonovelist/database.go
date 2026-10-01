@@ -41,7 +41,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// Migrate thực thi các câu lệnh DDL để tạo cấu trúc bảng nếu chưa tồn tại.
+// Migrate thực thi các câu lệnh DDL để tạo và nâng cấp cấu trúc bảng (bao gồm Props, Events, Tags).
 func (s *Store) Migrate() error {
 	ddl := `
 	PRAGMA foreign_keys = ON;
@@ -93,6 +93,40 @@ func (s *Store) Migrate() error {
 		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 	);
 
+	CREATE TABLE IF NOT EXISTS props (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		book_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		category TEXT NOT NULL DEFAULT 'Cổ vật',
+		description TEXT NOT NULL DEFAULT '',
+		significance TEXT NOT NULL DEFAULT '',
+		FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		book_id INTEGER NOT NULL,
+		title TEXT NOT NULL,
+		timeline_order INTEGER NOT NULL DEFAULT 1,
+		description TEXT NOT NULL DEFAULT '',
+		FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS tags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		book_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS entity_tags (
+		entity_type TEXT NOT NULL,
+		entity_id INTEGER NOT NULL,
+		tag_id INTEGER NOT NULL,
+		PRIMARY KEY (entity_type, entity_id, tag_id),
+		FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+	);
+
 	CREATE TABLE IF NOT EXISTS scenes (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		chapter_id INTEGER NOT NULL,
@@ -119,25 +153,123 @@ func (s *Store) Migrate() error {
 		FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
 		FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
 	);
+
+	CREATE TABLE IF NOT EXISTS scene_props (
+		scene_id INTEGER NOT NULL,
+		prop_id INTEGER NOT NULL,
+		PRIMARY KEY (scene_id, prop_id),
+		FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+		FOREIGN KEY (prop_id) REFERENCES props(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS scene_events (
+		scene_id INTEGER NOT NULL,
+		event_id INTEGER NOT NULL,
+		PRIMARY KEY (scene_id, event_id),
+		FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+		FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+	);
 	`
 	_, err := s.db.Exec(ddl)
 	return err
 }
 
-// SeedDefaultProjectIfEmpty tạo một dự án tiểu thuyết mẫu tiếng Việt nếu cơ sở dữ liệu đang trống.
+// SeedDefaultProjectIfEmpty tạo một dự án mẫu tiếng Việt nếu cơ sở dữ liệu trống,
+// hoặc bổ sung Vật phẩm / Sự kiện / Thẻ mẫu cho dự án hiện có nếu các bảng mới đang trống.
 func (s *Store) SeedDefaultProjectIfEmpty() error {
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM projects`).Scan(&count); err != nil {
 		return err
 	}
-	if count > 0 {
-		return nil
+	if count == 0 {
+		_, err := s.SeedVietnameseSampleProject()
+		return err
 	}
-	_, err := s.SeedVietnameseSampleProject()
-	return err
+
+	// Nếu DB cũ đã có project nhưng chưa có dữ liệu mẫu cho bảng tags/props/events thì tự động khởi tạo
+	var tagCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tagCount); err == nil && tagCount == 0 {
+		projects, _ := s.ListProjects()
+		if len(projects) > 0 {
+			_ = s.seedWorldBuildingExtrasForProject(projects[0].ID)
+		}
+	}
+	return nil
 }
 
-// SeedVietnameseSampleProject khởi tạo một tác phẩm mẫu tiếng Việt hoàn chỉnh.
+func (s *Store) seedWorldBuildingExtrasForProject(bookID int64) error {
+	tagCoVat, err := s.CreateTag(bookID, "Cổ vật")
+	if err != nil {
+		return err
+	}
+	tagKhuVucCam, err := s.CreateTag(bookID, "Khu vực cấm")
+	if err != nil {
+		return err
+	}
+	tagThienGioi, err := s.CreateTag(bookID, "Thiên giới")
+	if err != nil {
+		return err
+	}
+	tagHoangGia, err := s.CreateTag(bookID, "Bí mật triều đình")
+	if err != nil {
+		return err
+	}
+
+	prop1, err := s.CreateProp(
+		bookID,
+		"Thấu Kính Hải Đăng Cổ",
+		"Báu vật quang học",
+		"Phiến pha lê thế kỷ XVII có vết rạn ẩn chứa hải đồ ra đảo sương mù.",
+		"Chìa khóa duy nhất giải mã luồng lạch qua rạn đá ngầm Nam Hải.",
+	)
+	if err == nil {
+		_ = s.SetEntityTags(EntityProp, prop1.ID, []int64{tagCoVat.ID, tagHoangGia.ID})
+	}
+
+	prop2, err := s.CreateProp(
+		bookID,
+		"La Bàn Đồng Khắc Chữ Chu Sa",
+		"Khí cụ hàng hải",
+		"Chiếc la bàn đồng cổ của thuyền trưởng Trần Đình Bách có kim chỉ hướng lệch theo từ trường đảo ngầm.",
+		"Giúp định vị phương vị Sao Khuê trong đêm sương.",
+	)
+	if err == nil {
+		_ = s.SetEntityTags(EntityProp, prop2.ID, []int64{tagCoVat.ID})
+	}
+
+	ev1, err := s.CreateEvent(
+		bookID,
+		"Vụ Đắm Đội Thương Thuyền Năm Cảnh Hưng",
+		1,
+		"Đội thuyền buôn chở cặp thấu kính song sinh đột ngột mất tích giữa vùng biển sương mù 80 năm trước.",
+	)
+	if err == nil {
+		_ = s.SetEntityTags(EntityEvent, ev1.ID, []int64{tagHoangGia.ID, tagKhuVucCam.ID})
+	}
+
+	ev2, err := s.CreateEvent(
+		bookID,
+		"Đêm Thủy Triều Đỏ Rằm Tháng Tám",
+		2,
+		"Thời điểm duy nhất trong năm khi rạn đá ngầm hạ thấp, mở lối vào ngọn hải đăng cổ.",
+	)
+	if err == nil {
+		_ = s.SetEntityTags(EntityEvent, ev2.ID, []int64{tagThienGioi.ID, tagKhuVucCam.ID})
+	}
+
+	// Gắn thẻ mẫu cho nhân vật và địa điểm đầu tiên (nếu có)
+	chars, _ := s.ListCharacters(bookID)
+	if len(chars) > 0 {
+		_ = s.SetEntityTags(EntityCharacter, chars[0].ID, []int64{tagHoangGia.ID})
+	}
+	locs, _ := s.ListLocations(bookID)
+	if len(locs) > 0 {
+		_ = s.SetEntityTags(EntityLocation, locs[0].ID, []int64{tagKhuVucCam.ID})
+	}
+	return nil
+}
+
+// SeedVietnameseSampleProject khởi tạo một tác phẩm mẫu tiếng Việt hoàn chỉnh kèm Nhân vật, Địa điểm, Vật phẩm, Sự kiện và Thẻ.
 func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 	proj, err := s.CreateProject(
 		"Bản Đồ Thủy Tinh Thành Hội An",
@@ -150,27 +282,86 @@ func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 		return nil, err
 	}
 
+	tagCoVat, _ := s.CreateTag(proj.ID, "Cổ vật")
+	tagKhuVucCam, _ := s.CreateTag(proj.ID, "Khu vực cấm")
+	tagThienGioi, _ := s.CreateTag(proj.ID, "Thiên giới")
+	tagHoangGia, _ := s.CreateTag(proj.ID, "Bí mật triều đình")
+
 	elena, err := s.CreateCharacter(proj.ID, "Lê Ngọc Liên", "Nhân vật chính", "Nghệ nhân chế tác và phục chế thấu kính tại phố cổ Hội An.")
 	if err != nil {
 		return nil, err
 	}
+	_ = s.SetEntityTags(EntityCharacter, elena.ID, []int64{tagCoVat.ID, tagHoangGia.ID})
+
 	julian, err := s.CreateCharacter(proj.ID, "Trần Đình Bách", "Đồng hành", "Thuyền trưởng tàu buôn từng đi qua vùng biển sương mù Nam Hải.")
 	if err != nil {
 		return nil, err
 	}
+	_ = s.SetEntityTags(EntityCharacter, julian.ID, []int64{tagKhuVucCam.ID})
+
 	archivist, err := s.CreateCharacter(proj.ID, "Cụ Thủ Từ Họ Phạm", "Người dẫn đường", "Người trông coi kho thư tịch cổ tại hội quán.")
 	if err != nil {
 		return nil, err
 	}
+	_ = s.SetEntityTags(EntityCharacter, archivist.ID, []int64{tagHoangGia.ID, tagThienGioi.ID})
 
 	observatory, err := s.CreateLocation(proj.ID, "Xưởng Thủy Tinh Phố Cổ", "Căn gác gỗ nhìn ra sông Thu Bồn với những lò nung pha lê và bàn mài thấu kính.")
 	if err != nil {
 		return nil, err
 	}
+	_ = s.SetEntityTags(EntityLocation, observatory.ID, []int64{tagCoVat.ID})
+
 	vault, err := s.CreateLocation(proj.ID, "Thư Các Chùa Cầu", "Căn phòng lưu trữ bản đồ hàng hải và nhật ký thương thuyền trăm năm.")
 	if err != nil {
 		return nil, err
 	}
+	_ = s.SetEntityTags(EntityLocation, vault.ID, []int64{tagKhuVucCam.ID, tagHoangGia.ID})
+
+	propLens, err := s.CreateProp(
+		proj.ID,
+		"Thấu Kính Hải Đăng Cổ",
+		"Báu vật quang học",
+		"Phiến pha lê thế kỷ XVII có vết rạn ẩn chứa hải đồ ra đảo sương mù.",
+		"Chìa khóa duy nhất giải mã luồng lạch qua rạn đá ngầm Nam Hải.",
+	)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.SetEntityTags(EntityProp, propLens.ID, []int64{tagCoVat.ID, tagThienGioi.ID})
+
+	propCompass, err := s.CreateProp(
+		proj.ID,
+		"La Bàn Đồng Khắc Chữ Chu Sa",
+		"Khí cụ hàng hải",
+		"Chiếc la bàn đồng cổ của thuyền trưởng Trần Đình Bách.",
+		"Định vị tọa độ đảo ẩn khi kết hợp với chùm sáng từ thấu kính.",
+	)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.SetEntityTags(EntityProp, propCompass.ID, []int64{tagCoVat.ID})
+
+	evShipwreck, err := s.CreateEvent(
+		proj.ID,
+		"Vụ Mất Tích Đội Thương Thuyền 80 Năm Trước",
+		1,
+		"Đội thuyền chở cặp thấu kính song sinh biến mất trong màn sương ngoài khơi Cù Lao Chàm.",
+	)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.SetEntityTags(EntityEvent, evShipwreck.ID, []int64{tagHoangGia.ID, tagKhuVucCam.ID})
+
+	evEquinox, err := s.CreateEvent(
+		proj.ID,
+		"Đêm Thủy Triều Thấp Rằm Tháng Tám",
+		2,
+		"Thời khắc rạn đá ngầm lộ diện và ngọn hải đăng cổ phát tín hiệu.",
+	)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.SetEntityTags(EntityEvent, evEquinox.ID, []int64{tagThienGioi.ID})
 
 	act1, err := s.CreateAct(proj.ID, "Hồi I — Vết Rạn Trong Thấu Kính")
 	if err != nil {
@@ -206,11 +397,13 @@ Ngoài hiên gỗ, tiếng nước sông Thu Bồn vỗ nhẹ vào mạn thuyề
 	}
 	sc1.Summary = "Ngọc Liên và Đình Bách phát hiện tấm hải đồ ẩn hiện qua ánh đèn xuyên qua thấu kính cổ."
 	sc1.Content = scene1Content
-	sc1.SideNotes = "Ghi chú: Nhấn mạnh chi tiết mùi dầu thông và tiếng chuông chùa xa xăm. Bổ sung mô tả chiếc la bàn đồng của Đình Bách."
+	sc1.SideNotes = "Ghi chú: Nhấn mạnh chi tiết mùi dầu thông và tiếng chuông chùa xa xăm."
 	sc1.Status = StatusCompleted
 	sc1.POVCharacterID = &elena.ID
 	sc1.LocationID = &observatory.ID
 	sc1.CharacterIDs = []int64{elena.ID, julian.ID}
+	sc1.PropIDs = []int64{propLens.ID, propCompass.ID}
+	sc1.EventIDs = []int64{evShipwreck.ID}
 	if err := s.UpdateScene(sc1); err != nil {
 		return nil, err
 	}
@@ -230,6 +423,8 @@ Ngoài hiên gỗ, tiếng nước sông Thu Bồn vỗ nhẹ vào mạn thuyề
 	sc2.POVCharacterID = &elena.ID
 	sc2.LocationID = &vault.ID
 	sc2.CharacterIDs = []int64{elena.ID, julian.ID, archivist.ID}
+	sc2.PropIDs = []int64{propLens.ID}
+	sc2.EventIDs = []int64{evShipwreck.ID, evEquinox.ID}
 	if err := s.UpdateScene(sc2); err != nil {
 		return nil, err
 	}
@@ -245,6 +440,8 @@ Ngoài hiên gỗ, tiếng nước sông Thu Bồn vỗ nhẹ vào mạn thuyề
 	sc3.POVCharacterID = &julian.ID
 	sc3.LocationID = &observatory.ID
 	sc3.CharacterIDs = []int64{elena.ID, julian.ID}
+	sc3.PropIDs = []int64{propCompass.ID}
+	sc3.EventIDs = []int64{evEquinox.ID}
 	if err := s.UpdateScene(sc3); err != nil {
 		return nil, err
 	}
@@ -260,6 +457,8 @@ Ngoài hiên gỗ, tiếng nước sông Thu Bồn vỗ nhẹ vào mạn thuyề
 	sc4.POVCharacterID = &elena.ID
 	sc4.LocationID = &observatory.ID
 	sc4.CharacterIDs = []int64{elena.ID, julian.ID}
+	sc4.PropIDs = []int64{propLens.ID, propCompass.ID}
+	sc4.EventIDs = []int64{evEquinox.ID}
 	if err := s.UpdateScene(sc4); err != nil {
 		return nil, err
 	}
@@ -267,7 +466,8 @@ Ngoài hiên gỗ, tiếng nước sông Thu Bồn vỗ nhẹ vào mạn thuyề
 	return proj, nil
 }
 
-// ListProjects trả về danh sách tất cả các dự án tiểu thuyết.
+// ==================== PROJECT / ACT / CHAPTER / SCENE CRUD ====================
+
 func (s *Store) ListProjects() ([]Project, error) {
 	rows, err := s.db.Query(`SELECT id, title, author, genre, synopsis, target_words, created_at, updated_at FROM projects ORDER BY id ASC`)
 	if err != nil {
@@ -286,7 +486,6 @@ func (s *Store) ListProjects() ([]Project, error) {
 	return out, rows.Err()
 }
 
-// CreateProject tạo mới một dự án tiểu thuyết.
 func (s *Store) CreateProject(title, author, genre, synopsis string, targetWords int) (*Project, error) {
 	if targetWords <= 0 {
 		targetWords = 50000
@@ -314,7 +513,6 @@ func (s *Store) CreateProject(title, author, genre, synopsis string, targetWords
 	}, nil
 }
 
-// ListActs trả về các Hồi của một dự án theo thứ tự vị trí.
 func (s *Store) ListActs(projectID int64) ([]Act, error) {
 	rows, err := s.db.Query(`SELECT id, project_id, title, position, created_at FROM acts WHERE project_id = ? ORDER BY position ASC, id ASC`, projectID)
 	if err != nil {
@@ -333,7 +531,6 @@ func (s *Store) ListActs(projectID int64) ([]Act, error) {
 	return list, rows.Err()
 }
 
-// CreateAct thêm một Hồi mới vào cuối dự án.
 func (s *Store) CreateAct(projectID int64, title string) (*Act, error) {
 	var nextPos int
 	_ = s.db.QueryRow(`SELECT COALESCE(MAX(position), 0) + 1 FROM acts WHERE project_id = ?`, projectID).Scan(&nextPos)
@@ -348,19 +545,16 @@ func (s *Store) CreateAct(projectID int64, title string) (*Act, error) {
 	return &Act{ID: id, ProjectID: projectID, Title: title, Position: nextPos, CreatedAt: time.Now()}, nil
 }
 
-// RenameAct cập nhật tiêu đề của một Hồi.
 func (s *Store) RenameAct(actID int64, newTitle string) error {
 	_, err := s.db.Exec(`UPDATE acts SET title = ? WHERE id = ?`, strings.TrimSpace(newTitle), actID)
 	return err
 }
 
-// DeleteAct xóa một Hồi và toàn bộ các Chương, Cảnh bên trong (nhờ ON DELETE CASCADE).
 func (s *Store) DeleteAct(actID int64) error {
 	_, err := s.db.Exec(`DELETE FROM acts WHERE id = ?`, actID)
 	return err
 }
 
-// MoveAct đổi vị trí của Hồi lên hoặc xuống (-1 hoặc +1).
 func (s *Store) MoveAct(actID int64, direction int) error {
 	var projectID int64
 	if err := s.db.QueryRow(`SELECT project_id FROM acts WHERE id = ?`, actID).Scan(&projectID); err != nil {
@@ -389,7 +583,6 @@ func (s *Store) MoveAct(actID int64, direction int) error {
 	return err
 }
 
-// ListChapters trả về các Chương thuộc một Hồi theo thứ tự vị trí.
 func (s *Store) ListChapters(actID int64) ([]Chapter, error) {
 	rows, err := s.db.Query(`SELECT id, act_id, title, position, target_words, created_at FROM chapters WHERE act_id = ? ORDER BY position ASC, id ASC`, actID)
 	if err != nil {
@@ -408,7 +601,6 @@ func (s *Store) ListChapters(actID int64) ([]Chapter, error) {
 	return list, rows.Err()
 }
 
-// GetChapter truy vấn một Chương theo ID.
 func (s *Store) GetChapter(chapterID int64) (*Chapter, error) {
 	var c Chapter
 	err := s.db.QueryRow(`SELECT id, act_id, title, position, target_words, created_at FROM chapters WHERE id = ?`, chapterID).
@@ -419,7 +611,6 @@ func (s *Store) GetChapter(chapterID int64) (*Chapter, error) {
 	return &c, nil
 }
 
-// CreateChapter thêm một Chương mới vào Hồi.
 func (s *Store) CreateChapter(actID int64, title string, targetWords int) (*Chapter, error) {
 	if targetWords <= 0 {
 		targetWords = 3000
@@ -437,19 +628,16 @@ func (s *Store) CreateChapter(actID int64, title string, targetWords int) (*Chap
 	return &Chapter{ID: id, ActID: actID, Title: title, Position: nextPos, TargetWords: targetWords, CreatedAt: time.Now()}, nil
 }
 
-// RenameChapter cập nhật tiêu đề Chương.
 func (s *Store) RenameChapter(chapterID int64, newTitle string) error {
 	_, err := s.db.Exec(`UPDATE chapters SET title = ? WHERE id = ?`, strings.TrimSpace(newTitle), chapterID)
 	return err
 }
 
-// DeleteChapter xóa một Chương và toàn bộ các Cảnh thuộc Chương đó.
 func (s *Store) DeleteChapter(chapterID int64) error {
 	_, err := s.db.Exec(`DELETE FROM chapters WHERE id = ?`, chapterID)
 	return err
 }
 
-// MoveChapter đổi vị trí Chương lên hoặc xuống trong cùng một Hồi.
 func (s *Store) MoveChapter(chapterID int64, direction int) error {
 	var actID int64
 	if err := s.db.QueryRow(`SELECT act_id FROM chapters WHERE id = ?`, chapterID).Scan(&actID); err != nil {
@@ -478,7 +666,6 @@ func (s *Store) MoveChapter(chapterID int64, direction int) error {
 	return err
 }
 
-// GetChapterWordProgress trả về tổng số từ hiện tại và mục tiêu số từ của một Chương.
 func (s *Store) GetChapterWordProgress(chapterID int64) (int, int, error) {
 	var totalWords int
 	var targetWords int
@@ -492,7 +679,6 @@ func (s *Store) GetChapterWordProgress(chapterID int64) (int, int, error) {
 	return totalWords, targetWords, err
 }
 
-// ListScenes trả về danh sách các Cảnh thuộc một Chương theo thứ tự vị trí.
 func (s *Store) ListScenes(chapterID int64) ([]Scene, error) {
 	rows, err := s.db.Query(`
 		SELECT id, chapter_id, title, summary, content, side_notes, status,
@@ -533,16 +719,13 @@ func (s *Store) ListScenes(chapterID int64) ([]Scene, error) {
 	}
 
 	for i := range list {
-		charIDs, err := s.getSceneCharacterIDs(list[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		list[i].CharacterIDs = charIDs
+		list[i].CharacterIDs, _ = s.getSceneCharacterIDs(list[i].ID)
+		list[i].PropIDs, _ = s.getScenePropIDs(list[i].ID)
+		list[i].EventIDs, _ = s.getSceneEventIDs(list[i].ID)
 	}
 	return list, nil
 }
 
-// GetScene tải đầy đủ thông tin một Cảnh cùng danh sách nhân vật xuất hiện.
 func (s *Store) GetScene(sceneID int64) (*Scene, error) {
 	var sc Scene
 	var povID, locID sql.NullInt64
@@ -568,11 +751,9 @@ func (s *Store) GetScene(sceneID int64) (*Scene, error) {
 		v := locID.Int64
 		sc.LocationID = &v
 	}
-	charIDs, err := s.getSceneCharacterIDs(sc.ID)
-	if err != nil {
-		return nil, err
-	}
-	sc.CharacterIDs = charIDs
+	sc.CharacterIDs, _ = s.getSceneCharacterIDs(sc.ID)
+	sc.PropIDs, _ = s.getScenePropIDs(sc.ID)
+	sc.EventIDs, _ = s.getSceneEventIDs(sc.ID)
 	return &sc, nil
 }
 
@@ -582,19 +763,48 @@ func (s *Store) getSceneCharacterIDs(sceneID int64) ([]int64, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
 	var ids []int64
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
 		}
-		ids = append(ids, id)
 	}
 	return ids, rows.Err()
 }
 
-// CreateScene tạo một Cảnh mới vào cuối Chương.
+func (s *Store) getScenePropIDs(sceneID int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT prop_id FROM scene_props WHERE scene_id = ? ORDER BY prop_id ASC`, sceneID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
+}
+
+func (s *Store) getSceneEventIDs(sceneID int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT event_id FROM scene_events WHERE scene_id = ? ORDER BY event_id ASC`, sceneID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) CreateScene(chapterID int64, title string, targetWords int) (*Scene, error) {
 	if targetWords <= 0 {
 		targetWords = 1200
@@ -624,7 +834,7 @@ func (s *Store) CreateScene(chapterID int64, title string, targetWords int) (*Sc
 	}, nil
 }
 
-// UpdateScene lưu nội dung văn xuôi, ghi chú bên lề, số từ và thẻ siêu dữ liệu vào SQLite.
+// UpdateScene lưu nội dung văn xuôi, ghi chú bên lề, số từ và các bảng ánh xạ (Nhân vật, Vật phẩm, Sự kiện) vào SQLite.
 func (s *Store) UpdateScene(sc *Scene) error {
 	sc.WordCount = CountWords(sc.Content)
 	sc.Status = NormalizeStatus(sc.Status)
@@ -667,6 +877,7 @@ func (s *Store) UpdateScene(sc *Scene) error {
 		return err
 	}
 
+	// Cập nhật ánh xạ Nhân vật trong cảnh
 	if _, err := tx.Exec(`DELETE FROM scene_characters WHERE scene_id = ?`, sc.ID); err != nil {
 		return err
 	}
@@ -676,22 +887,39 @@ func (s *Store) UpdateScene(sc *Scene) error {
 		}
 	}
 
+	// Cập nhật ánh xạ Vật phẩm trong cảnh (scene_props)
+	if _, err := tx.Exec(`DELETE FROM scene_props WHERE scene_id = ?`, sc.ID); err != nil {
+		return err
+	}
+	for _, pid := range sc.PropIDs {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO scene_props (scene_id, prop_id) VALUES (?, ?)`, sc.ID, pid); err != nil {
+			return err
+		}
+	}
+
+	// Cập nhật ánh xạ Sự kiện trong cảnh (scene_events)
+	if _, err := tx.Exec(`DELETE FROM scene_events WHERE scene_id = ?`, sc.ID); err != nil {
+		return err
+	}
+	for _, eid := range sc.EventIDs {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO scene_events (scene_id, event_id) VALUES (?, ?)`, sc.ID, eid); err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 
-// RenameScene đổi tiêu đề của Cảnh.
 func (s *Store) RenameScene(sceneID int64, newTitle string) error {
 	_, err := s.db.Exec(`UPDATE scenes SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, strings.TrimSpace(newTitle), sceneID)
 	return err
 }
 
-// DeleteScene xóa một Cảnh khỏi Chương.
 func (s *Store) DeleteScene(sceneID int64) error {
 	_, err := s.db.Exec(`DELETE FROM scenes WHERE id = ?`, sceneID)
 	return err
 }
 
-// MoveScene đổi thứ tự vị trí của Cảnh lên hoặc xuống trong cùng một Chương.
 func (s *Store) MoveScene(sceneID int64, direction int) error {
 	var chapterID int64
 	if err := s.db.QueryRow(`SELECT chapter_id FROM scenes WHERE id = ?`, sceneID).Scan(&chapterID); err != nil {
@@ -720,7 +948,103 @@ func (s *Store) MoveScene(sceneID int64, direction int) error {
 	return err
 }
 
-// ListCharacters trả về danh sách tất cả nhân vật thuộc dự án.
+// ==================== UNIVERSAL TAGGING SYSTEM (tags & entity_tags) ====================
+
+// ListTags trả về danh sách tất cả các Thẻ của một cuốn sách (book_id).
+func (s *Store) ListTags(bookID int64) ([]Tag, error) {
+	rows, err := s.db.Query(`SELECT id, book_id, name FROM tags WHERE book_id = ? ORDER BY name ASC`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Tag
+	for rows.Next() {
+		var t Tag
+		if err := rows.Scan(&t.ID, &t.BookID, &t.Name); err != nil {
+			return nil, err
+		}
+		list = append(list, t)
+	}
+	return list, rows.Err()
+}
+
+// CreateTag tạo một Thẻ mới cho tác phẩm (nếu trùng tên thì trả về thẻ đã có).
+func (s *Store) CreateTag(bookID int64, name string) (*Tag, error) {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return nil, fmt.Errorf("tên thẻ không được để trống")
+	}
+	existing, _ := s.ListTags(bookID)
+	for _, t := range existing {
+		if strings.EqualFold(t.Name, clean) {
+			return &t, nil
+		}
+	}
+	res, err := s.db.Exec(`INSERT INTO tags (book_id, name) VALUES (?, ?)`, bookID, clean)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return &Tag{ID: id, BookID: bookID, Name: clean}, nil
+}
+
+// DeleteTag xóa một Thẻ và toàn bộ liên kết trong entity_tags.
+func (s *Store) DeleteTag(tagID int64) error {
+	_, err := s.db.Exec(`DELETE FROM tags WHERE id = ?`, tagID)
+	return err
+}
+
+// GetEntityTags trả về danh sách các Thẻ được gắn cho một thực thể cụ thể (character/location/prop/event).
+func (s *Store) GetEntityTags(entityType EntityType, entityID int64) ([]Tag, error) {
+	rows, err := s.db.Query(`
+		SELECT t.id, t.book_id, t.name
+		FROM tags t
+		INNER JOIN entity_tags et ON et.tag_id = t.id
+		WHERE et.entity_type = ? AND et.entity_id = ?
+		ORDER BY t.name ASC
+	`, string(entityType), entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tags []Tag
+	for rows.Next() {
+		var t Tag
+		if err := rows.Scan(&t.ID, &t.BookID, &t.Name); err != nil {
+			return nil, err
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
+// SetEntityTags cập nhật danh sách ID thẻ được gắn cho một thực thể trong bảng entity_tags.
+func (s *Store) SetEntityTags(entityType EntityType, entityID int64, tagIDs []int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`DELETE FROM entity_tags WHERE entity_type = ? AND entity_id = ?`, string(entityType), entityID); err != nil {
+		return err
+	}
+	for _, tid := range tagIDs {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO entity_tags (entity_type, entity_id, tag_id) VALUES (?, ?, ?)`,
+			string(entityType), entityID, tid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ==================== CHARACTERS CRUD + TAGS ====================
+
 func (s *Store) ListCharacters(projectID int64) ([]Character, error) {
 	rows, err := s.db.Query(`SELECT id, project_id, name, role, description FROM characters WHERE project_id = ? ORDER BY name ASC`, projectID)
 	if err != nil {
@@ -736,10 +1060,15 @@ func (s *Store) ListCharacters(projectID int64) ([]Character, error) {
 		}
 		list = append(list, c)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].Tags, _ = s.GetEntityTags(EntityCharacter, list[i].ID)
+	}
+	return list, nil
 }
 
-// CreateCharacter thêm một nhân vật mới vào dự án.
 func (s *Store) CreateCharacter(projectID int64, name, role, description string) (*Character, error) {
 	res, err := s.db.Exec(`INSERT INTO characters (project_id, name, role, description) VALUES (?, ?, ?, ?)`,
 		projectID, strings.TrimSpace(name), strings.TrimSpace(role), strings.TrimSpace(description))
@@ -753,7 +1082,23 @@ func (s *Store) CreateCharacter(projectID int64, name, role, description string)
 	return &Character{ID: id, ProjectID: projectID, Name: name, Role: role, Description: description}, nil
 }
 
-// ListLocations trả về danh sách tất cả bối cảnh / địa điểm của dự án.
+func (s *Store) UpdateCharacter(c Character, tagIDs []int64) error {
+	_, err := s.db.Exec(`UPDATE characters SET name = ?, role = ?, description = ? WHERE id = ?`,
+		strings.TrimSpace(c.Name), strings.TrimSpace(c.Role), strings.TrimSpace(c.Description), c.ID)
+	if err != nil {
+		return err
+	}
+	return s.SetEntityTags(EntityCharacter, c.ID, tagIDs)
+}
+
+func (s *Store) DeleteCharacter(charID int64) error {
+	_ = s.SetEntityTags(EntityCharacter, charID, nil)
+	_, err := s.db.Exec(`DELETE FROM characters WHERE id = ?`, charID)
+	return err
+}
+
+// ==================== LOCATIONS CRUD + TAGS ====================
+
 func (s *Store) ListLocations(projectID int64) ([]Location, error) {
 	rows, err := s.db.Query(`SELECT id, project_id, name, description FROM locations WHERE project_id = ? ORDER BY name ASC`, projectID)
 	if err != nil {
@@ -769,10 +1114,15 @@ func (s *Store) ListLocations(projectID int64) ([]Location, error) {
 		}
 		list = append(list, l)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].Tags, _ = s.GetEntityTags(EntityLocation, list[i].ID)
+	}
+	return list, nil
 }
 
-// CreateLocation thêm một bối cảnh / địa điểm mới vào dự án.
 func (s *Store) CreateLocation(projectID int64, name, description string) (*Location, error) {
 	res, err := s.db.Exec(`INSERT INTO locations (project_id, name, description) VALUES (?, ?, ?)`,
 		projectID, strings.TrimSpace(name), strings.TrimSpace(description))
@@ -786,7 +1136,160 @@ func (s *Store) CreateLocation(projectID int64, name, description string) (*Loca
 	return &Location{ID: id, ProjectID: projectID, Name: name, Description: description}, nil
 }
 
-// ExportManuscriptMarkdown biên dịch tuần tự toàn bộ Hồi, Chương và Cảnh sang tài liệu Markdown.
+func (s *Store) UpdateLocation(l Location, tagIDs []int64) error {
+	_, err := s.db.Exec(`UPDATE locations SET name = ?, description = ? WHERE id = ?`,
+		strings.TrimSpace(l.Name), strings.TrimSpace(l.Description), l.ID)
+	if err != nil {
+		return err
+	}
+	return s.SetEntityTags(EntityLocation, l.ID, tagIDs)
+}
+
+func (s *Store) DeleteLocation(locID int64) error {
+	_ = s.SetEntityTags(EntityLocation, locID, nil)
+	_, err := s.db.Exec(`DELETE FROM locations WHERE id = ?`, locID)
+	return err
+}
+
+// ==================== PROPS (VẬT PHẨM) CRUD + TAGS ====================
+
+func (s *Store) ListProps(bookID int64) ([]Prop, error) {
+	rows, err := s.db.Query(`SELECT id, book_id, name, category, description, significance FROM props WHERE book_id = ? ORDER BY name ASC`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Prop
+	for rows.Next() {
+		var p Prop
+		if err := rows.Scan(&p.ID, &p.BookID, &p.Name, &p.Category, &p.Description, &p.Significance); err != nil {
+			return nil, err
+		}
+		list = append(list, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].Tags, _ = s.GetEntityTags(EntityProp, list[i].ID)
+	}
+	return list, nil
+}
+
+func (s *Store) CreateProp(bookID int64, name, category, description, significance string) (*Prop, error) {
+	if strings.TrimSpace(category) == "" {
+		category = "Cổ vật"
+	}
+	res, err := s.db.Exec(`
+		INSERT INTO props (book_id, name, category, description, significance)
+		VALUES (?, ?, ?, ?, ?)
+	`, bookID, strings.TrimSpace(name), strings.TrimSpace(category), strings.TrimSpace(description), strings.TrimSpace(significance))
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return &Prop{
+		ID:           id,
+		BookID:       bookID,
+		Name:         name,
+		Category:     category,
+		Description:  description,
+		Significance: significance,
+	}, nil
+}
+
+func (s *Store) UpdateProp(p Prop, tagIDs []int64) error {
+	_, err := s.db.Exec(`
+		UPDATE props
+		SET name = ?, category = ?, description = ?, significance = ?
+		WHERE id = ?
+	`, strings.TrimSpace(p.Name), strings.TrimSpace(p.Category), strings.TrimSpace(p.Description), strings.TrimSpace(p.Significance), p.ID)
+	if err != nil {
+		return err
+	}
+	return s.SetEntityTags(EntityProp, p.ID, tagIDs)
+}
+
+func (s *Store) DeleteProp(propID int64) error {
+	_ = s.SetEntityTags(EntityProp, propID, nil)
+	_, err := s.db.Exec(`DELETE FROM props WHERE id = ?`, propID)
+	return err
+}
+
+// ==================== EVENTS (SỰ KIỆN DÒNG THỜI GIAN) CRUD + TAGS ====================
+
+func (s *Store) ListEvents(bookID int64) ([]Event, error) {
+	rows, err := s.db.Query(`SELECT id, book_id, title, timeline_order, description FROM events WHERE book_id = ? ORDER BY timeline_order ASC, id ASC`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Event
+	for rows.Next() {
+		var ev Event
+		if err := rows.Scan(&ev.ID, &ev.BookID, &ev.Title, &ev.TimelineOrder, &ev.Description); err != nil {
+			return nil, err
+		}
+		list = append(list, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].Tags, _ = s.GetEntityTags(EntityEvent, list[i].ID)
+	}
+	return list, nil
+}
+
+func (s *Store) CreateEvent(bookID int64, title string, timelineOrder int, description string) (*Event, error) {
+	if timelineOrder <= 0 {
+		_ = s.db.QueryRow(`SELECT COALESCE(MAX(timeline_order), 0) + 1 FROM events WHERE book_id = ?`, bookID).Scan(&timelineOrder)
+	}
+	res, err := s.db.Exec(`
+		INSERT INTO events (book_id, title, timeline_order, description)
+		VALUES (?, ?, ?, ?)
+	`, bookID, strings.TrimSpace(title), timelineOrder, strings.TrimSpace(description))
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return &Event{
+		ID:            id,
+		BookID:        bookID,
+		Title:         title,
+		TimelineOrder: timelineOrder,
+		Description:   description,
+	}, nil
+}
+
+func (s *Store) UpdateEvent(ev Event, tagIDs []int64) error {
+	_, err := s.db.Exec(`
+		UPDATE events
+		SET title = ?, timeline_order = ?, description = ?
+		WHERE id = ?
+	`, strings.TrimSpace(ev.Title), ev.TimelineOrder, strings.TrimSpace(ev.Description), ev.ID)
+	if err != nil {
+		return err
+	}
+	return s.SetEntityTags(EntityEvent, ev.ID, tagIDs)
+}
+
+func (s *Store) DeleteEvent(eventID int64) error {
+	_ = s.SetEntityTags(EntityEvent, eventID, nil)
+	_, err := s.db.Exec(`DELETE FROM events WHERE id = ?`, eventID)
+	return err
+}
+
+// ==================== MANUSCRIPT EXPORTERS ====================
+
 func (s *Store) ExportManuscriptMarkdown(project Project) (string, error) {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("# %s\n\n", project.Title))
@@ -831,7 +1334,6 @@ func (s *Store) ExportManuscriptMarkdown(project Project) (string, error) {
 	return b.String(), nil
 }
 
-// ExportManuscriptHTML biên dịch tuần tự toàn bộ Hồi, Chương và Cảnh sang trang HTML chuẩn in ấn.
 func (s *Store) ExportManuscriptHTML(project Project) (string, error) {
 	var b strings.Builder
 	b.WriteString(`<!DOCTYPE html>

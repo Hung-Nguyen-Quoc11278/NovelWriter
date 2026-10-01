@@ -1,5 +1,4 @@
--- Sơ đồ Cơ sở dữ liệu SQLite của GoNovelist
--- Kích hoạt ràng buộc khóa ngoại (Foreign Keys) để tự động xóa dây chuyền (Cascade) theo cấu trúc phân cấp.
+-- Sơ đồ Cơ sở dữ liệu SQLite của GoNovelist (Phiên bản Mở rộng Thế giới & Hệ thống Thẻ Đa năng)
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
@@ -50,6 +49,44 @@ CREATE TABLE IF NOT EXISTS locations (
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
+-- Bảng Vật phẩm (Props)
+CREATE TABLE IF NOT EXISTS props (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Cổ vật',
+    description TEXT NOT NULL DEFAULT '',
+    significance TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+-- Bảng Sự kiện (Events) theo dòng thời gian
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    timeline_order INTEGER NOT NULL DEFAULT 1,
+    description TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+-- Hệ thống Thẻ đa năng (Universal Tagging System)
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+-- Bảng ánh xạ đa hình thực thể - thẻ (character / location / prop / event)
+CREATE TABLE IF NOT EXISTS entity_tags (
+    entity_type TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    tag_id INTEGER NOT NULL,
+    PRIMARY KEY (entity_type, entity_id, tag_id),
+    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS scenes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     chapter_id INTEGER NOT NULL,
@@ -69,6 +106,7 @@ CREATE TABLE IF NOT EXISTS scenes (
     FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE SET NULL
 );
 
+-- Các bảng ánh xạ Cảnh (Scene Mapping Tables)
 CREATE TABLE IF NOT EXISTS scene_characters (
     scene_id INTEGER NOT NULL,
     character_id INTEGER NOT NULL,
@@ -77,6 +115,26 @@ CREATE TABLE IF NOT EXISTS scene_characters (
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS scene_props (
+    scene_id INTEGER NOT NULL,
+    prop_id INTEGER NOT NULL,
+    PRIMARY KEY (scene_id, prop_id),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+    FOREIGN KEY (prop_id) REFERENCES props(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scene_events (
+    scene_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    PRIMARY KEY (scene_id, event_id),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_acts_project_pos ON acts(project_id, position);
 CREATE INDEX IF NOT EXISTS idx_chapters_act_pos ON chapters(act_id, position);
 CREATE INDEX IF NOT EXISTS idx_scenes_chapter_pos ON scenes(chapter_id, position);
+CREATE INDEX IF NOT EXISTS idx_props_book ON props(book_id);
+CREATE INDEX IF NOT EXISTS idx_events_book_order ON events(book_id, timeline_order);
+CREATE INDEX IF NOT EXISTS idx_tags_book ON tags(book_id);
+CREATE INDEX IF NOT EXISTS idx_entity_tags_lookup ON entity_tags(entity_type, entity_id);

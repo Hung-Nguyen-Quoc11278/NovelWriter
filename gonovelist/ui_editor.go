@@ -13,7 +13,8 @@ import (
 
 const noneOptionLabel = "(Chưa chọn)"
 
-// EditorPanel quản lý trình soạn thảo văn xuôi, bộ tự động lưu (auto-save), siêu dữ liệu và ghi chú bên lề.
+// EditorPanel quản lý trình soạn thảo văn xuôi, bộ tự động lưu (auto-save),
+// bảng Ngữ cảnh Cảnh (Nhân vật, Địa điểm, Vật phẩm, Sự kiện, POV, Trạng thái) và Ghi chú bên lề.
 type EditorPanel struct {
 	store     *Store
 	window    fyne.Window
@@ -25,7 +26,7 @@ type EditorPanel struct {
 	loading     bool
 	saveTimer   *time.Timer
 
-	// Các thành phần trình soạn thảo trung tâm
+	// Các khung nhập văn bản trung tâm (Hỗ trợ gõ Tiếng Việt Telex & Unicode)
 	titleEntry       *widget.Entry
 	summaryEntry     *widget.Entry
 	proseEntry       *widget.Entry
@@ -38,21 +39,25 @@ type EditorPanel struct {
 	chapterProgress  *widget.ProgressBar
 	saveStateLabel   *widget.Label
 
-	// Bảng ngữ cảnh & siêu dữ liệu bên phải (Nhân vật, Bối cảnh, Góc nhìn POV, Trạng thái, Ghi chú)
-	statusSelect      *widget.Select
-	povSelect         *widget.Select
-	locationSelect    *widget.Select
-	charactersCheck   *widget.CheckGroup
-	sideNotesEntry    *widget.Entry
-	inspectorTabs     *container.AppTabs
-	splitContainer    *container.Split
+	// Bảng Ngữ cảnh Cảnh bên phải (Trạng thái, POV, Địa điểm, Nhân vật, Vật phẩm, Sự kiện, Ghi chú)
+	statusSelect    *widget.Select
+	povSelect       *widget.Select
+	locationSelect  *widget.Select
+	charactersCheck *widget.CheckGroup
+	propsCheck      *widget.CheckGroup
+	eventsCheck     *widget.CheckGroup
+	sideNotesEntry  *widget.Entry
+	inspectorTabs   *container.AppTabs
+	splitContainer  *container.Split
 
-	// Bộ nhớ đệm danh sách Nhân vật & Bối cảnh
+	// Bộ nhớ đệm danh sách thực thể của tác phẩm hiện tại
 	characters []Character
 	locations  []Location
+	props      []Prop
+	events     []Event
 }
 
-// NewEditorPanel khởi tạo khung soạn thảo văn xuôi và bảng ngữ cảnh bên phải bằng tiếng Việt.
+// NewEditorPanel khởi tạo khung soạn thảo văn xuôi và bảng Ngữ cảnh Cảnh bằng tiếng Việt.
 func NewEditorPanel(store *Store, window fyne.Window, projectID int64, onSaved func()) *EditorPanel {
 	ep := &EditorPanel{
 		store:     store,
@@ -67,24 +72,30 @@ func NewEditorPanel(store *Store, window fyne.Window, projectID int64, onSaved f
 
 func (ep *EditorPanel) buildUI() {
 	ep.titleEntry = widget.NewEntry()
-	ep.titleEntry.SetPlaceHolder("Tiêu đề cảnh...")
-	ep.titleEntry.OnChanged = func(_ string) { ep.scheduleAutoSave() }
+	ep.titleEntry.SetPlaceHolder("Nhập tiêu đề cảnh (hỗ trợ gõ Tiếng Việt)...")
+	AttachVietnameseTelex(ep.titleEntry, func(_ string) {
+		ep.scheduleAutoSave()
+	})
 
 	ep.summaryEntry = widget.NewEntry()
 	ep.summaryEntry.SetPlaceHolder("Tóm tắt ngắn gọn nội dung hoặc mục đích kịch tính của cảnh...")
-	ep.summaryEntry.OnChanged = func(_ string) { ep.scheduleAutoSave() }
+	AttachVietnameseTelex(ep.summaryEntry, func(_ string) {
+		ep.scheduleAutoSave()
+	})
 
 	ep.targetWordsEntry = widget.NewEntry()
 	ep.targetWordsEntry.SetPlaceHolder("1200")
-	ep.targetWordsEntry.OnChanged = func(_ string) { ep.scheduleAutoSave() }
+	ep.targetWordsEntry.OnChanged = func(_ string) {
+		ep.scheduleAutoSave()
+	}
 
 	ep.proseEntry = widget.NewMultiLineEntry()
 	ep.proseEntry.Wrapping = fyne.TextWrapWord
-	ep.proseEntry.SetPlaceHolder("Bắt đầu viết nội dung cảnh tại đây... Mọi thay đổi sẽ được tự động lưu vào SQLite.")
-	ep.proseEntry.OnChanged = func(_ string) {
+	ep.proseEntry.SetPlaceHolder("Bắt đầu viết nội dung cảnh bằng tiếng Việt tại đây... Mọi thay đổi sẽ được tự động lưu vào SQLite.")
+	AttachVietnameseTelex(ep.proseEntry, func(_ string) {
 		ep.updateLiveWordCounts()
 		ep.scheduleAutoSave()
-	}
+	})
 
 	ep.sceneWordLabel = widget.NewLabel("Cảnh: 0 / 1200 từ")
 	ep.chapterWordLabel = widget.NewLabel("Chương: 0 / 3000 từ")
@@ -93,7 +104,7 @@ func (ep *EditorPanel) buildUI() {
 	ep.sceneProgress = widget.NewProgressBar()
 	ep.chapterProgress = widget.NewProgressBar()
 
-	// Các điều khiển Siêu dữ liệu (Metadata)
+	// Các điều khiển trong bảng Ngữ cảnh Cảnh
 	ep.statusSelect = widget.NewSelect(AllSceneStatuses(), func(_ string) {
 		ep.scheduleAutoSave()
 	})
@@ -110,12 +121,20 @@ func (ep *EditorPanel) buildUI() {
 		ep.scheduleAutoSave()
 	})
 
+	ep.propsCheck = widget.NewCheckGroup([]string{}, func(_ []string) {
+		ep.scheduleAutoSave()
+	})
+
+	ep.eventsCheck = widget.NewCheckGroup([]string{}, func(_ []string) {
+		ep.scheduleAutoSave()
+	})
+
 	ep.sideNotesEntry = widget.NewMultiLineEntry()
 	ep.sideNotesEntry.Wrapping = fyne.TextWrapWord
 	ep.sideNotesEntry.SetPlaceHolder("Ghi chú bên lề, ý tưởng đột xuất, câu thoại nháp hoặc tư liệu lịch sử cho cảnh này...")
-	ep.sideNotesEntry.OnChanged = func(_ string) {
+	AttachVietnameseTelex(ep.sideNotesEntry, func(_ string) {
 		ep.scheduleAutoSave()
-	}
+	})
 
 	// Bố cục khu vực soạn thảo trung tâm
 	headerForm := container.NewVBox(
@@ -144,19 +163,36 @@ func (ep *EditorPanel) buildUI() {
 
 	centerEditor := container.NewBorder(headerForm, footerStats, nil, nil, ep.proseEntry)
 
-	// Bố cục thanh thanh tra Ngữ cảnh & Ghi chú bên phải
+	// Bố cục thanh bên phải: Tab "Ngữ cảnh Cảnh" (Mở rộng với Nhân vật, Vật phẩm & Sự kiện)
+	openHubBtn := widget.NewButton("⚙️ Mở Trung Tâm Thế Giới & Thẻ...", func() {
+		ShowWorldBuildingHub(ep.store, ep.window, ep.projectID, func() {
+			ep.ReloadMetadataOptions(ep.projectID)
+			if ep.activeScene != nil {
+				_ = ep.LoadScene(ep.activeScene.ID, ep.projectID)
+			}
+		})
+	})
+
 	contextTabContent := container.NewVScroll(container.NewVBox(
+		openHubBtn,
+		widget.NewSeparator(),
 		widget.NewLabelWithStyle("TRẠNG THÁI BIÊN TẬP", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ep.statusSelect,
 		widget.NewSeparator(),
 		widget.NewLabelWithStyle("GÓC NHÌN TRẦN THUẬT (POV)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ep.povSelect,
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("BỐI CẢNH / ĐỊA ĐIỂM", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabelWithStyle("ĐỊA ĐIỂM DIỄN RA CẢNH", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ep.locationSelect,
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("NHÂN VẬT XUẤT HIỆN TRONG CẢNH", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabelWithStyle("👤 NHÂN VẬT TRONG CẢNH", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ep.charactersCheck,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("🧭 VẬT PHẨM TRONG CẢNH (PROPS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		ep.propsCheck,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("⏳ SỰ KIỆN TRONG CẢNH (EVENTS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		ep.eventsCheck,
 	))
 
 	notesTabContent := container.NewBorder(
@@ -166,12 +202,12 @@ func (ep *EditorPanel) buildUI() {
 	)
 
 	ep.inspectorTabs = container.NewAppTabs(
-		container.NewTabItem("Ngữ cảnh & Nhân vật", contextTabContent),
+		container.NewTabItem("Ngữ cảnh Cảnh", contextTabContent),
 		container.NewTabItem("Ghi chú bên lề", notesTabContent),
 	)
 
 	ep.splitContainer = container.NewHSplit(centerEditor, ep.inspectorTabs)
-	ep.splitContainer.Offset = 0.70
+	ep.splitContainer.Offset = 0.68
 }
 
 // Container trả về đối tượng CanvasObject gốc của khung soạn thảo.
@@ -179,26 +215,30 @@ func (ep *EditorPanel) Container() fyne.CanvasObject {
 	return ep.splitContainer
 }
 
-// SetDistractionFree ẩn hoặc hiện thanh Ngữ cảnh & Ghi chú bên phải.
+// SetDistractionFree ẩn hoặc hiện thanh Ngữ cảnh Cảnh & Ghi chú bên phải.
 func (ep *EditorPanel) SetDistractionFree(enabled bool) {
 	if enabled {
 		ep.inspectorTabs.Hide()
 		ep.splitContainer.Offset = 1.0
 	} else {
 		ep.inspectorTabs.Show()
-		ep.splitContainer.Offset = 0.70
+		ep.splitContainer.Offset = 0.68
 	}
 	ep.splitContainer.Refresh()
 }
 
-// ReloadMetadataOptions tải lại danh sách Nhân vật và Địa điểm từ SQLite.
+// ReloadMetadataOptions tải lại danh sách Nhân vật, Địa điểm, Vật phẩm và Sự kiện từ SQLite.
 func (ep *EditorPanel) ReloadMetadataOptions(projectID int64) {
 	ep.projectID = projectID
 	chars, _ := ep.store.ListCharacters(projectID)
 	locs, _ := ep.store.ListLocations(projectID)
+	props, _ := ep.store.ListProps(projectID)
+	events, _ := ep.store.ListEvents(projectID)
 
 	ep.characters = chars
 	ep.locations = locs
+	ep.props = props
+	ep.events = events
 
 	povOpts := []string{noneOptionLabel}
 	charNames := make([]string, 0, len(chars))
@@ -212,7 +252,21 @@ func (ep *EditorPanel) ReloadMetadataOptions(projectID int64) {
 		locOpts = append(locOpts, l.Name)
 	}
 
+	propNames := make([]string, 0, len(props))
+	for _, p := range props {
+		propNames = append(propNames, p.Name)
+	}
+
+	eventTitles := make([]string, 0, len(events))
+	for _, ev := range events {
+		eventTitles = append(eventTitles, ev.Title)
+	}
+
+	ep.mu.Lock()
+	wasLoading := ep.loading
 	ep.loading = true
+	ep.mu.Unlock()
+
 	ep.povSelect.Options = povOpts
 	ep.povSelect.Refresh()
 
@@ -221,10 +275,19 @@ func (ep *EditorPanel) ReloadMetadataOptions(projectID int64) {
 
 	ep.charactersCheck.Options = charNames
 	ep.charactersCheck.Refresh()
-	ep.loading = false
+
+	ep.propsCheck.Options = propNames
+	ep.propsCheck.Refresh()
+
+	ep.eventsCheck.Options = eventTitles
+	ep.eventsCheck.Refresh()
+
+	ep.mu.Lock()
+	ep.loading = wasLoading
+	ep.mu.Unlock()
 }
 
-// LoadScene nạp dữ liệu một Cảnh từ SQLite vào trình soạn thảo.
+// LoadScene nạp dữ liệu một Cảnh (bao gồm Nhân vật, Vật phẩm, Sự kiện gắn kèm) từ SQLite vào trình soạn thảo.
 func (ep *EditorPanel) LoadScene(sceneID int64, projectID int64) error {
 	ep.FlushPendingSave()
 
@@ -256,7 +319,7 @@ func (ep *EditorPanel) LoadScene(sceneID int64, projectID int64) error {
 	}
 	ep.povSelect.SetSelected(povName)
 
-	// Gán bối cảnh
+	// Gán địa điểm
 	locName := noneOptionLabel
 	if sc.LocationID != nil {
 		locName = ep.findLocationNameByID(*sc.LocationID)
@@ -272,6 +335,26 @@ func (ep *EditorPanel) LoadScene(sceneID int64, projectID int64) error {
 		}
 	}
 	ep.charactersCheck.SetSelected(selectedCharNames)
+
+	// Gán các Vật phẩm trong cảnh (Props in Scene)
+	var selectedPropNames []string
+	for _, id := range sc.PropIDs {
+		name := ep.findPropNameByID(id)
+		if name != "" {
+			selectedPropNames = append(selectedPropNames, name)
+		}
+	}
+	ep.propsCheck.SetSelected(selectedPropNames)
+
+	// Gán các Sự kiện trong cảnh (Events in Scene)
+	var selectedEventTitles []string
+	for _, id := range sc.EventIDs {
+		title := ep.findEventTitleByID(id)
+		if title != "" {
+			selectedEventTitles = append(selectedEventTitles, title)
+		}
+	}
+	ep.eventsCheck.SetSelected(selectedEventTitles)
 
 	ep.mu.Lock()
 	ep.loading = false
@@ -338,7 +421,7 @@ func (ep *EditorPanel) scheduleAutoSave() {
 	})
 }
 
-// FlushPendingSave ghi ngay lập tức mọi thay đổi của Cảnh hiện tại xuống SQLite.
+// FlushPendingSave ghi ngay lập tức mọi thay đổi của Cảnh (bao gồm Vật phẩm & Sự kiện trong cảnh) xuống SQLite.
 func (ep *EditorPanel) FlushPendingSave() {
 	ep.mu.Lock()
 	if ep.loading || ep.activeScene == nil {
@@ -374,6 +457,22 @@ func (ep *EditorPanel) FlushPendingSave() {
 		}
 	}
 	sc.CharacterIDs = charIDs
+
+	var propIDs []int64
+	for _, name := range ep.propsCheck.Selected {
+		if idPtr := ep.findPropIDByName(name); idPtr != nil {
+			propIDs = append(propIDs, *idPtr)
+		}
+	}
+	sc.PropIDs = propIDs
+
+	var eventIDs []int64
+	for _, title := range ep.eventsCheck.Selected {
+		if idPtr := ep.findEventIDByTitle(title); idPtr != nil {
+			eventIDs = append(eventIDs, *idPtr)
+		}
+	}
+	sc.EventIDs = eventIDs
 	ep.mu.Unlock()
 
 	if err := ep.store.UpdateScene(&sc); err == nil {
@@ -381,6 +480,9 @@ func (ep *EditorPanel) FlushPendingSave() {
 		if ep.activeScene != nil && ep.activeScene.ID == sc.ID {
 			ep.activeScene.WordCount = sc.WordCount
 			ep.activeScene.TargetWords = sc.TargetWords
+			ep.activeScene.CharacterIDs = sc.CharacterIDs
+			ep.activeScene.PropIDs = sc.PropIDs
+			ep.activeScene.EventIDs = sc.EventIDs
 		}
 		ep.mu.Unlock()
 
@@ -434,4 +536,42 @@ func (ep *EditorPanel) findLocationNameByID(id int64) string {
 		}
 	}
 	return noneOptionLabel
+}
+
+func (ep *EditorPanel) findPropIDByName(name string) *int64 {
+	for _, p := range ep.props {
+		if p.Name == name {
+			id := p.ID
+			return &id
+		}
+	}
+	return nil
+}
+
+func (ep *EditorPanel) findPropNameByID(id int64) string {
+	for _, p := range ep.props {
+		if p.ID == id {
+			return p.Name
+		}
+	}
+	return ""
+}
+
+func (ep *EditorPanel) findEventIDByTitle(title string) *int64 {
+	for _, ev := range ep.events {
+		if ev.Title == title {
+			id := ev.ID
+			return &id
+		}
+	}
+	return nil
+}
+
+func (ep *EditorPanel) findEventTitleByID(id int64) string {
+	for _, ev := range ep.events {
+		if ev.ID == id {
+			return ev.Title
+		}
+	}
+	return ""
 }

@@ -10,6 +10,9 @@ import (
 )
 
 func main() {
+	// Tự động cấu hình phông chữ hệ thống hỗ trợ đầy đủ tiếng Việt Unicode trước khi khởi tạo Fyne
+	ConfigureVietnameseFont()
+
 	novelistApp := app.NewWithID("io.gonovelist.desktop.vi")
 	mainWindow := novelistApp.NewWindow("GoNovelist — Phần Mềm Sáng Tác Tiểu Thuyết")
 	mainWindow.Resize(fyne.NewSize(1360, 840))

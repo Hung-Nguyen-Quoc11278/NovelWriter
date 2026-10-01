@@ -1,6 +1,8 @@
 import mainGoRaw from '../../gonovelist/main.go?raw';
+import vietInputGoRaw from '../../gonovelist/vietnamese_input.go?raw';
 import modelsGoRaw from '../../gonovelist/models.go?raw';
 import databaseGoRaw from '../../gonovelist/database.go?raw';
+import uiWorldBuildingGoRaw from '../../gonovelist/ui_worldbuilding.go?raw';
 import uiMainGoRaw from '../../gonovelist/ui_main.go?raw';
 import uiEditorGoRaw from '../../gonovelist/ui_editor.go?raw';
 import schemaSqlRaw from '../../gonovelist/schema.sql?raw';
@@ -11,6 +13,7 @@ export interface GoSourceFile {
   path: string;
   layer:
     | 'Điểm Khởi Chạy (Entry Point)'
+    | 'Bộ Gõ & Phông Chữ Tiếng Việt'
     | 'Tầng Mô Hình (Domain Layer)'
     | 'Tầng Dữ Liệu & Dịch Vụ (SQLite)'
     | 'Tầng Giao Diện (Fyne v2 UI)'
@@ -21,13 +24,15 @@ export interface GoSourceFile {
 }
 
 export const PROJECT_TREE_LAYOUT = `gonovelist/
-├── go.mod          # Định nghĩa module Go 1.22+ (fyne.io/fyne/v2 v2.5.3, modernc.org/sqlite)
-├── schema.sql      # Lược đồ cơ sở dữ liệu quan hệ SQLite (ràng buộc khóa ngoại & chế độ WAL)
-├── main.go         # Điểm khởi chạy ứng dụng, khởi tạo thư mục dữ liệu & cơ sở dữ liệu
-├── models.go       # Các struct miền dữ liệu (Project, Act, Chapter, Scene, Character, Location) & bộ đếm từ Unicode
-├── database.go     # Tầng truy xuất SQLite, tự động tạo bảng, dữ liệu mẫu tiếng Việt & xuất Markdown/HTML
-├── ui_main.go      # Cửa sổ chính Fyne v2, cây phân cấp Hồi -> Chương -> Cảnh, thanh trình đơn & hộp thoại
-└── ui_editor.go    # Trình soạn thảo văn xuôi, tự động lưu chống dội (750ms debounce), thanh tiến độ & siêu dữ liệu`;
+├── go.mod                 # Định nghĩa module Go 1.22+ (fyne.io/fyne/v2 v2.5.3, modernc.org/sqlite)
+├── schema.sql             # Lược đồ SQLite (projects, acts, chapters, scenes, characters, locations, props, events, tags, entity_tags)
+├── main.go                # Điểm khởi chạy ứng dụng, tự động nạp phông chữ Tiếng Việt & khởi tạo SQLite
+├── vietnamese_input.go    # Bộ gõ Tiếng Việt Telex tích hợp cho Fyne widget.Entry & tự động dò tìm phông chữ Unicode
+├── models.go              # Các struct miền dữ liệu (Project, Act, Chapter, Scene, Character, Location, Prop, Event, Tag)
+├── database.go            # Tầng truy xuất SQLite, миграции tự động, quản lý Thẻ đa hình (entity_tags) & xuất bản thảo
+├── ui_worldbuilding.go    # Trung tâm Xây dựng Thế giới đa tab (Nhân vật, Địa điểm, Vật phẩm, Sự kiện, Quản lý Thẻ & Lọc theo thẻ)
+├── ui_main.go             # Cửa sổ chính Fyne v2, cây phân cấp Hồi -> Chương -> Cảnh, nút mở Trung tâm Thế giới & bật/tắt Telex
+└── ui_editor.go           # Trình soạn thảo văn xuôi Tiếng Việt, auto-save 750ms & thanh bên Ngữ cảnh Cảnh (Nhân vật, Vật phẩm, Sự kiện)`;
 
 export const BUILD_COMMANDS = `# 1. Tạo thư mục dự án và khởi tạo module Go (Yêu cầu Go 1.22+)
 mkdir -p gonovelist && cd gonovelist
@@ -54,15 +59,23 @@ export const GO_SOURCE_FILES: GoSourceFile[] = [
     path: 'gonovelist/main.go',
     layer: 'Điểm Khởi Chạy (Entry Point)',
     summary:
-      'Khởi tạo ứng dụng Fyne v2 tiếng Việt, mở cơ sở dữ liệu SQLite tại ~/.gonovelist/gonovelist.db và đảm bảo lưu bản thảo trước khi đóng cửa sổ.',
+      'Tự động cấu hình phông chữ Unicode Tiếng Việt, khởi tạo ứng dụng Fyne v2 và mở cơ sở dữ liệu SQLite tại ~/.gonovelist/gonovelist.db.',
     code: mainGoRaw,
+  },
+  {
+    filename: 'vietnamese_input.go',
+    path: 'gonovelist/vietnamese_input.go',
+    layer: 'Bộ Gõ & Phông Chữ Tiếng Việt',
+    summary:
+      'Bộ gõ Tiếng Việt Telex tích hợp trực tiếp vào widget.Entry của Fyne (hỗ trợ aa->â, aw->ă, dd->đ, ee->ê, oo->ô, ow->ơ, uw->ư và 5 dấu s/f/r/x/j/z) kèm tự động nạp phông chữ hệ thống.',
+    code: vietInputGoRaw,
   },
   {
     filename: 'models.go',
     path: 'gonovelist/models.go',
     layer: 'Tầng Mô Hình (Domain Layer)',
     summary:
-      'Định nghĩa các thực thể cốt lõi (Project, Act, Chapter, Scene, Character, Location), chuẩn hóa trạng thái tiếng Việt và hàm đếm từ hỗ trợ đầy đủ tiếng Việt Unicode.',
+      'Định nghĩa các thực thể cốt lõi và mở rộng: Character, Location, Prop (Vật phẩm), Event (Sự kiện), Tag (Thẻ đa năng), EntityType và Scene (PropIDs, EventIDs).',
     code: modelsGoRaw,
   },
   {
@@ -70,31 +83,39 @@ export const GO_SOURCE_FILES: GoSourceFile[] = [
     path: 'gonovelist/database.go',
     layer: 'Tầng Dữ Liệu & Dịch Vụ (SQLite)',
     summary:
-      'Quản lý lưu trữ SQLite, tự động khởi tạo bảng, tạo tác phẩm mẫu tiếng Việt ("Bản Đồ Thủy Tinh Thành Hội An"), sắp xếp thứ tự Hồi/Chương/Cảnh và xuất bản thảo Markdown/HTML.',
+      'Cập nhật migration SQLite cho bảng props, events, tags, entity_tags, scene_props, scene_events; cung cấp CRUD đầy đủ và dữ liệu mẫu Tiếng Việt.',
     code: databaseGoRaw,
   },
   {
-    filename: 'ui_main.go',
-    path: 'gonovelist/ui_main.go',
+    filename: 'ui_worldbuilding.go',
+    path: 'gonovelist/ui_worldbuilding.go',
     layer: 'Tầng Giao Diện (Fyne v2 UI)',
     summary:
-      'Điều phối bố cục cửa sổ chính tiếng Việt, cây phân cấp Hồi/Chương/Cảnh (widget.Tree), thanh trình đơn, tạo tác phẩm mẫu tiếng Việt và xuất bản thảo.',
-    code: uiMainGoRaw,
+      'Trung tâm Xây dựng Thế giới đa tab (container.NewAppTabs): Nhân vật, Địa điểm, Vật phẩm, Sự kiện và Quản lý Thẻ kèm bộ lọc thông minh theo Thẻ.',
+    code: uiWorldBuildingGoRaw,
   },
   {
     filename: 'ui_editor.go',
     path: 'gonovelist/ui_editor.go',
     layer: 'Tầng Giao Diện (Fyne v2 UI)',
     summary:
-      'Khung soạn thảo văn xuôi tiếng Việt, bộ tự động lưu chống dội 750ms, thanh tiến độ từ theo Cảnh/Chương và bảng Ngữ cảnh (Trạng thái, POV, Bối cảnh, Nhân vật, Ghi chú).',
+      'Khung soạn thảo văn xuôi Tiếng Việt và thanh bên Ngữ cảnh Cảnh mở rộng (chọn Nhân vật, Vật phẩm trong cảnh, Sự kiện trong cảnh lưu thẳng vào SQLite).',
     code: uiEditorGoRaw,
+  },
+  {
+    filename: 'ui_main.go',
+    path: 'gonovelist/ui_main.go',
+    layer: 'Tầng Giao Diện (Fyne v2 UI)',
+    summary:
+      'Cửa sổ chính Fyne v2 tích hợp nút "Quản lý Thế giới & Thẻ", công tắc bật/tắt bộ gõ Tiếng Việt Telex và cây phân cấp Hồi -> Chương -> Cảnh.',
+    code: uiMainGoRaw,
   },
   {
     filename: 'schema.sql',
     path: 'gonovelist/schema.sql',
     layer: 'Lược Đồ CSDL (SQLite DDL)',
     summary:
-      'Định nghĩa các bảng SQLite với khóa ngoại xóa dây chuyền (ON DELETE CASCADE) cho Tác phẩm, Hồi, Chương, Cảnh, Nhân vật và Bối cảnh.',
+      'Lược đồ SQLite hoàn chỉnh bao gồm các bảng mới: props, events, tags, entity_tags, scene_props và scene_events.',
     code: schemaSqlRaw,
   },
   {

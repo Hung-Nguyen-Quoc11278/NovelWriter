@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// NovelistUI điều phối bố cục cửa sổ chính, cây phân cấp Hồi/Chương/Cảnh và các hộp thoại.
+// NovelistUI điều phối bố cục cửa sổ chính, cây phân cấp Hồi/Chương/Cảnh và Trung tâm Thế giới.
 type NovelistUI struct {
 	app           fyne.App
 	window        fyne.Window
@@ -64,6 +64,16 @@ func NewNovelistUI(app fyne.App, window fyne.Window, store *Store) (*NovelistUI,
 	return ui, nil
 }
 
+// openWorldBuildingHub mở cửa sổ đa tab quản lý Nhân vật, Địa điểm, Vật phẩm, Sự kiện và Thẻ.
+func (ui *NovelistUI) openWorldBuildingHub() {
+	ShowWorldBuildingHub(ui.store, ui.window, ui.activeProject.ID, func() {
+		ui.editorPanel.ReloadMetadataOptions(ui.activeProject.ID)
+		if ui.editorPanel.activeScene != nil {
+			_ = ui.editorPanel.LoadScene(ui.editorPanel.activeScene.ID, ui.activeProject.ID)
+		}
+	})
+}
+
 func (ui *NovelistUI) buildMainMenu() {
 	fileMenu := fyne.NewMenu("Tệp",
 		fyne.NewMenuItem("Tác phẩm mới...", func() {
@@ -97,9 +107,10 @@ func (ui *NovelistUI) buildMainMenu() {
 		fyne.NewMenuItem("Xóa mục đang chọn", func() { ui.confirmDeleteNode() }),
 	)
 
-	worldMenu := fyne.NewMenu("Thế giới & Nhân vật",
-		fyne.NewMenuItem("Thêm Nhân vật mới...", func() { ui.showNewCharacterDialog() }),
-		fyne.NewMenuItem("Thêm Bối cảnh / Địa điểm mới...", func() { ui.showNewLocationDialog() }),
+	worldMenu := fyne.NewMenu("Thế giới & Thẻ",
+		fyne.NewMenuItem("Mở Trung Tâm Thế Giới (Nhân vật / Địa điểm / Vật phẩm / Sự kiện / Thẻ)...", func() {
+			ui.openWorldBuildingHub()
+		}),
 	)
 
 	viewMenu := fyne.NewMenu("Chế độ xem",
@@ -124,12 +135,25 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 		for _, p := range all {
 			if p.Title == selected {
 				ui.activeProject = p
+				ui.editorPanel.ReloadMetadataOptions(p.ID)
 				ui.RefreshTreeData()
 				ui.selectFirstAvailableScene()
 				break
 			}
 		}
 	}
+
+	// Nút mở Trung tâm Xây dựng Thế giới & Quản lý Thẻ trên thanh công cụ
+	worldHubBtn := widget.NewButtonWithIcon("Quản lý Thế giới & Thẻ", theme.GridIcon(), func() {
+		ui.openWorldBuildingHub()
+	})
+	worldHubBtn.Importance = widget.HighImportance
+
+	// Công tắc bật/tắt bộ gõ Tiếng Việt Telex nội bộ
+	telexCheck := widget.NewCheck("Bộ gõ Tiếng Việt Telex tích hợp", func(checked bool) {
+		GlobalTelexEnabled = checked
+	})
+	telexCheck.SetChecked(GlobalTelexEnabled)
 
 	// Thanh công cụ thao tác nhanh cho Hồi / Chương / Cảnh
 	addActBtn := widget.NewButtonWithIcon("Hồi", theme.ContentAddIcon(), func() {
@@ -241,6 +265,8 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 	topSidebarControls := container.NewVBox(
 		widget.NewLabelWithStyle("TÁC PHẨM ĐANG MỞ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ui.projectSelect,
+		worldHubBtn,
+		telexCheck,
 		widget.NewSeparator(),
 		container.NewGridWithColumns(3, addActBtn, addChapBtn, addSceneBtn),
 		container.NewHBox(
@@ -277,6 +303,7 @@ func (ui *NovelistUI) reloadProjectSelector(active Project) {
 	ui.projectSelect.Options = names
 	ui.projectSelect.SetSelected(active.Title)
 	ui.projectSelect.Refresh()
+	ui.editorPanel.ReloadMetadataOptions(active.ID)
 	ui.RefreshTreeData()
 	ui.selectFirstAvailableScene()
 }
@@ -381,7 +408,6 @@ func (ui *NovelistUI) selectFirstAvailableScene() {
 	}
 }
 
-// Các phương thức hỗ trợ xác định nút cha khi thêm Chương hoặc Cảnh
 func (ui *NovelistUI) resolveTargetActID() (int64, error) {
 	if node, ok := ui.nodeMeta[ui.selectedUID]; ok {
 		switch node.Kind {
@@ -429,14 +455,14 @@ func (ui *NovelistUI) resolveTargetChapterID() (int64, error) {
 	return 0, fmt.Errorf("vui lòng tạo ít nhất một Chương trước")
 }
 
-// Các hộp thoại thêm / sửa / xóa Hồi, Chương, Cảnh, Nhân vật, Bối cảnh
+// Các hộp thoại thêm / sửa / xóa Hồi, Chương, Cảnh hỗ trợ nhập Tiếng Việt Telex
 
 func (ui *NovelistUI) showNewProjectDialog() {
-	titleEntry := widget.NewEntry()
+	titleEntry := NewVietEntry()
 	titleEntry.SetPlaceHolder("VD: Mùa Gió Chướng Trên Đỉnh Ngự Bình")
-	authorEntry := widget.NewEntry()
+	authorEntry := NewVietEntry()
 	authorEntry.SetPlaceHolder("Tên tác giả")
-	genreEntry := widget.NewEntry()
+	genreEntry := NewVietEntry()
 	genreEntry.SetPlaceHolder("Tiểu thuyết lịch sử / Văn học đương đại...")
 
 	dialog.ShowForm("Khởi tạo Tác phẩm Mới", "Tạo tác phẩm", "Hủy", []*widget.FormItem{
@@ -461,7 +487,7 @@ func (ui *NovelistUI) showNewProjectDialog() {
 }
 
 func (ui *NovelistUI) showAddActDialog() {
-	entry := widget.NewEntry()
+	entry := NewVietEntry()
 	entry.SetPlaceHolder("VD: Hồi III — Ngày Trở Về")
 	dialog.ShowForm("Thêm Hồi Mới", "Tạo Hồi", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Tiêu đề Hồi", entry),
@@ -483,7 +509,7 @@ func (ui *NovelistUI) showAddChapterDialog() {
 		dialog.ShowError(err, ui.window)
 		return
 	}
-	titleEntry := widget.NewEntry()
+	titleEntry := NewVietEntry()
 	titleEntry.SetPlaceHolder("VD: Chương 4: Bến Đò Đêm Mưa")
 	targetEntry := widget.NewEntry()
 	targetEntry.SetText("3000")
@@ -511,7 +537,7 @@ func (ui *NovelistUI) showAddSceneDialog() {
 		dialog.ShowError(err, ui.window)
 		return
 	}
-	titleEntry := widget.NewEntry()
+	titleEntry := NewVietEntry()
 	titleEntry.SetPlaceHolder("VD: Cảnh 2: Cuộc Gặp Dưới Hiên Trà")
 	targetEntry := widget.NewEntry()
 	targetEntry.SetText("1200")
@@ -540,7 +566,7 @@ func (ui *NovelistUI) showRenameNodeDialog() {
 	if !ok {
 		return
 	}
-	entry := widget.NewEntry()
+	entry := NewVietEntry()
 	entry.SetText(node.Title)
 
 	dialog.ShowForm("Đổi Tên Mục", "Lưu thay đổi", "Hủy", []*widget.FormItem{
@@ -619,53 +645,6 @@ func (ui *NovelistUI) confirmDeleteNode() {
 		},
 		ui.window,
 	)
-}
-
-func (ui *NovelistUI) showNewCharacterDialog() {
-	nameEntry := widget.NewEntry()
-	nameEntry.SetPlaceHolder("Họ và tên nhân vật")
-	roleEntry := widget.NewEntry()
-	roleEntry.SetPlaceHolder("Nhân vật chính / Phản diện / Đồng hành")
-	descEntry := widget.NewMultiLineEntry()
-	descEntry.SetPlaceHolder("Ngoại hình, tính cách, động cơ, quá khứ...")
-
-	dialog.ShowForm("Thêm Nhân Vật Mới", "Lưu Nhân vật", "Hủy", []*widget.FormItem{
-		widget.NewFormItem("Tên nhân vật", nameEntry),
-		widget.NewFormItem("Vai trò", roleEntry),
-		widget.NewFormItem("Tiểu sử & Đặc điểm", descEntry),
-	}, func(ok bool) {
-		if !ok || nameEntry.Text == "" {
-			return
-		}
-		_, err := ui.store.CreateCharacter(ui.activeProject.ID, nameEntry.Text, roleEntry.Text, descEntry.Text)
-		if err != nil {
-			dialog.ShowError(err, ui.window)
-			return
-		}
-		ui.editorPanel.ReloadMetadataOptions(ui.activeProject.ID)
-	}, ui.window)
-}
-
-func (ui *NovelistUI) showNewLocationDialog() {
-	nameEntry := widget.NewEntry()
-	nameEntry.SetPlaceHolder("Tên bối cảnh / địa điểm")
-	descEntry := widget.NewMultiLineEntry()
-	descEntry.SetPlaceHolder("Không khí, kiến trúc, âm thanh, chi tiết giác quan...")
-
-	dialog.ShowForm("Thêm Bối Cảnh / Địa Điểm", "Lưu Bối cảnh", "Hủy", []*widget.FormItem{
-		widget.NewFormItem("Tên địa điểm", nameEntry),
-		widget.NewFormItem("Mô tả chi tiết", descEntry),
-	}, func(ok bool) {
-		if !ok || nameEntry.Text == "" {
-			return
-		}
-		_, err := ui.store.CreateLocation(ui.activeProject.ID, nameEntry.Text, descEntry.Text)
-		if err != nil {
-			dialog.ShowError(err, ui.window)
-			return
-		}
-		ui.editorPanel.ReloadMetadataOptions(ui.activeProject.ID)
-	}, ui.window)
 }
 
 func (ui *NovelistUI) exportManuscript(format string) {

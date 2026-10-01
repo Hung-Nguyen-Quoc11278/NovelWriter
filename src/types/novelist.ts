@@ -26,12 +26,19 @@ export function normalizeStatus(raw: string): SceneStatus {
   }
 }
 
+export interface Tag {
+  id: number;
+  bookId: number;
+  name: string;
+}
+
 export interface Character {
   id: number;
   projectId: number;
   name: string;
   role: string;
   description: string;
+  tagIds?: number[];
 }
 
 export interface Location {
@@ -39,6 +46,26 @@ export interface Location {
   projectId: number;
   name: string;
   description: string;
+  tagIds?: number[];
+}
+
+export interface Prop {
+  id: number;
+  bookId: number;
+  name: string;
+  category: string;
+  description: string;
+  significance: string;
+  tagIds?: number[];
+}
+
+export interface WorldEvent {
+  id: number;
+  bookId: number;
+  title: string;
+  timelineOrder: number;
+  description: string;
+  tagIds?: number[];
 }
 
 export interface Scene {
@@ -56,6 +83,8 @@ export interface Scene {
   position: number;
   updatedAt: string;
   characterIds: number[];
+  propIds?: number[];
+  eventIds?: number[];
 }
 
 export interface Chapter {
@@ -83,8 +112,11 @@ export interface Project {
   synopsis: string;
   targetWords: number;
   updatedAt: string;
+  tags?: Tag[];
   characters: Character[];
   locations: Location[];
+  props?: Prop[];
+  events?: WorldEvent[];
   acts: Act[];
 }
 

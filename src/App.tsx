@@ -26,8 +26,11 @@ import {
   Character,
   Location,
   Project,
+  Prop,
   Scene,
   SceneStatus,
+  Tag,
+  WorldEvent,
   countWords,
   normalizeStatus,
 } from './types/novelist';
@@ -38,7 +41,7 @@ import { GoSourceExplorer } from './components/GoSourceExplorer';
 
 type NavTab = 'studio' | 'world' | 'export' | 'go-source' | 'architecture';
 
-const STORAGE_KEY = 'gonovelist_sqlite_vi_v3';
+const STORAGE_KEY = 'gonovelist_sqlite_vi_v4';
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>(() => {
@@ -546,7 +549,8 @@ export default function App() {
   const handleAddCharacter = (
     name: string,
     role: string,
-    description: string
+    description: string,
+    tagIds: number[] = []
   ) => {
     const newChar: Character = {
       id: Date.now(),
@@ -554,6 +558,7 @@ export default function App() {
       name,
       role,
       description,
+      tagIds,
     };
     updateActiveProject((proj) => ({
       ...proj,
@@ -587,12 +592,17 @@ export default function App() {
     }));
   };
 
-  const handleAddLocation = (name: string, description: string) => {
+  const handleAddLocation = (
+    name: string,
+    description: string,
+    tagIds: number[] = []
+  ) => {
     const newLoc: Location = {
       id: Date.now(),
       projectId: activeProject.id,
       name,
       description,
+      tagIds,
     };
     updateActiveProject((proj) => ({
       ...proj,
@@ -621,6 +631,134 @@ export default function App() {
             locationId: s.locationId === id ? null : s.locationId,
           })),
         })),
+      })),
+    }));
+  };
+
+  // Quản lý Vật phẩm (Props), Sự kiện (Events) & Thẻ (Tags)
+  const handleAddProp = (
+    name: string,
+    category: string,
+    description: string,
+    significance: string,
+    tagIds: number[] = []
+  ) => {
+    const newProp: Prop = {
+      id: Date.now(),
+      bookId: activeProject.id,
+      name,
+      category,
+      description,
+      significance,
+      tagIds,
+    };
+    updateActiveProject((proj) => ({
+      ...proj,
+      props: [...(proj.props || []), newProp],
+    }));
+  };
+
+  const handleUpdateProp = (updated: Prop) => {
+    updateActiveProject((proj) => ({
+      ...proj,
+      props: (proj.props || []).map((p) => (p.id === updated.id ? updated : p)),
+    }));
+  };
+
+  const handleDeleteProp = (id: number) => {
+    updateActiveProject((proj) => ({
+      ...proj,
+      props: (proj.props || []).filter((p) => p.id !== id),
+      acts: proj.acts.map((a) => ({
+        ...a,
+        chapters: a.chapters.map((c) => ({
+          ...c,
+          scenes: c.scenes.map((s) => ({
+            ...s,
+            propIds: (s.propIds || []).filter((pid) => pid !== id),
+          })),
+        })),
+      })),
+    }));
+  };
+
+  const handleAddEvent = (
+    title: string,
+    timelineOrder: number,
+    description: string,
+    tagIds: number[] = []
+  ) => {
+    const newEv: WorldEvent = {
+      id: Date.now(),
+      bookId: activeProject.id,
+      title,
+      timelineOrder,
+      description,
+      tagIds,
+    };
+    updateActiveProject((proj) => ({
+      ...proj,
+      events: [...(proj.events || []), newEv],
+    }));
+  };
+
+  const handleUpdateEvent = (updated: WorldEvent) => {
+    updateActiveProject((proj) => ({
+      ...proj,
+      events: (proj.events || []).map((ev) =>
+        ev.id === updated.id ? updated : ev
+      ),
+    }));
+  };
+
+  const handleDeleteEvent = (id: number) => {
+    updateActiveProject((proj) => ({
+      ...proj,
+      events: (proj.events || []).filter((ev) => ev.id !== id),
+      acts: proj.acts.map((a) => ({
+        ...a,
+        chapters: a.chapters.map((c) => ({
+          ...c,
+          scenes: c.scenes.map((s) => ({
+            ...s,
+            eventIds: (s.eventIds || []).filter((eid) => eid !== id),
+          })),
+        })),
+      })),
+    }));
+  };
+
+  const handleAddTag = (name: string) => {
+    const newTag: Tag = {
+      id: Date.now(),
+      bookId: activeProject.id,
+      name,
+    };
+    updateActiveProject((proj) => ({
+      ...proj,
+      tags: [...(proj.tags || []), newTag],
+    }));
+  };
+
+  const handleDeleteTag = (tagId: number) => {
+    updateActiveProject((proj) => ({
+      ...proj,
+      tags: (proj.tags || []).filter((t) => t.id !== tagId),
+      characters: proj.characters.map((c) => ({
+        ...c,
+        tagIds: (c.tagIds || []).filter((id) => id !== tagId),
+      })),
+      locations: proj.locations.map((l) => ({
+        ...l,
+        tagIds: (l.tagIds || []).filter((id) => id !== tagId),
+      })),
+      props: (proj.props || []).map((p) => ({
+        ...p,
+        tagIds: (p.tagIds || []).filter((id) => id !== tagId),
+      })),
+      events: (proj.events || []).map((ev) => ({
+        ...ev,
+        tagIds: (ev.tagIds || []).filter((id) => id !== tagId),
       })),
     }));
   };
@@ -824,6 +962,14 @@ export default function App() {
             onAddLocation={handleAddLocation}
             onUpdateLocation={handleUpdateLocation}
             onDeleteLocation={handleDeleteLocation}
+            onAddProp={handleAddProp}
+            onUpdateProp={handleUpdateProp}
+            onDeleteProp={handleDeleteProp}
+            onAddEvent={handleAddEvent}
+            onUpdateEvent={handleUpdateEvent}
+            onDeleteEvent={handleDeleteEvent}
+            onAddTag={handleAddTag}
+            onDeleteTag={handleDeleteTag}
             onSelectScene={(sceneId) => {
               setSelectedSceneId(sceneId);
               setActiveTab('studio');
@@ -1541,7 +1687,7 @@ export default function App() {
                         : 'text-[#68655E] hover:text-[#1C1B18]'
                     }`}
                   >
-                    Ngữ Cảnh &amp; Nhân Vật
+                    Ngữ Cảnh Cảnh
                   </button>
                   <button
                     onClick={() => setInspectorTab('notes')}
@@ -1755,6 +1901,115 @@ export default function App() {
                       >
                         + Thêm
                       </button>
+                    </div>
+                  </div>
+
+                  {/* Chọn Vật phẩm trong Cảnh (scene_props) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-[#1C1B18]">
+                        🧭 Vật Phẩm Trong Cảnh (Props)
+                      </label>
+                      <span className="text-[11px] font-mono text-[#68655E] tabular-nums">
+                        Đã chọn {(activeContext.scene.propIds || []).length}
+                      </span>
+                    </div>
+                    <div className="border border-[#DCD9D0] bg-white rounded-lg divide-y divide-[#F1EFEA]">
+                      {(activeProject.props || []).map((prop) => {
+                        const checked = (
+                          activeContext.scene.propIds || []
+                        ).includes(prop.id);
+                        return (
+                          <button
+                            key={prop.id}
+                            type="button"
+                            onClick={() => {
+                              updateActiveScene((sc) => {
+                                const current = sc.propIds || [];
+                                const exists = current.includes(prop.id);
+                                return {
+                                  ...sc,
+                                  propIds: exists
+                                    ? current.filter((id) => id !== prop.id)
+                                    : [...current, prop.id],
+                                };
+                              });
+                            }}
+                            className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-[#F8F7F4] transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-xs font-medium text-[#1C1B18] truncate">
+                                {prop.name}
+                              </div>
+                              <div className="text-[11px] text-[#68655E]">
+                                {prop.category}
+                              </div>
+                            </div>
+                            <div
+                              className={`w-4 h-4 rounded flex items-center justify-center border ${
+                                checked
+                                  ? 'bg-[#1E3A5F] border-[#1E3A5F] text-white'
+                                  : 'border-[#DCD9D0] bg-white'
+                              }`}
+                            >
+                              {checked && <Check className="w-3 h-3" />}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Chọn Sự kiện trong Cảnh (scene_events) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-[#1C1B18]">
+                        ⏳ Sự Kiện Trong Cảnh (Events)
+                      </label>
+                      <span className="text-[11px] font-mono text-[#68655E] tabular-nums">
+                        Đã chọn {(activeContext.scene.eventIds || []).length}
+                      </span>
+                    </div>
+                    <div className="border border-[#DCD9D0] bg-white rounded-lg divide-y divide-[#F1EFEA]">
+                      {(activeProject.events || []).map((ev) => {
+                        const checked = (
+                          activeContext.scene.eventIds || []
+                        ).includes(ev.id);
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => {
+                              updateActiveScene((sc) => {
+                                const current = sc.eventIds || [];
+                                const exists = current.includes(ev.id);
+                                return {
+                                  ...sc,
+                                  eventIds: exists
+                                    ? current.filter((id) => id !== ev.id)
+                                    : [...current, ev.id],
+                                };
+                              });
+                            }}
+                            className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-[#F8F7F4] transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-xs font-medium text-[#1C1B18] truncate">
+                                [Mốc #{ev.timelineOrder}] {ev.title}
+                              </div>
+                            </div>
+                            <div
+                              className={`w-4 h-4 rounded flex items-center justify-center border ${
+                                checked
+                                  ? 'bg-[#1E3A5F] border-[#1E3A5F] text-white'
+                                  : 'border-[#DCD9D0] bg-white'
+                              }`}
+                            >
+                              {checked && <Check className="w-3 h-3" />}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
