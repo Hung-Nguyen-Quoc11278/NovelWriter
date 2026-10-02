@@ -283,6 +283,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 	ui.projectSelect = widget.NewSelect(projectNames, nil)
 	ui.projectSelect.SetSelected(ui.activeProject.Title)
 	ui.projectSelect.OnChanged = func(selected string) {
+		PlayUIClickSound()
 		all, _ := ui.store.ListProjects()
 		for _, p := range all {
 			if p.Title == selected {
@@ -295,32 +296,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 		}
 	}
 
-	// Nút mở Trung tâm Xây dựng Thế giới & Quản lý Thẻ trên thanh công cụ
-	worldHubBtn := widget.NewButtonWithIcon("Quản lý Thế giới & Thẻ", theme.GridIcon(), func() {
-		PlayUIClickSound()
-		ui.openWorldBuildingHub()
-	})
-	worldHubBtn.Importance = widget.HighImportance
-
-	// Nút mở Hộp thoại Xuất Bản Thảo Đa Định Dạng (TXT, ODT, PDF, EPUB, MD, HTML)
-	exportHubBtn := widget.NewButtonWithIcon("Xuất bản thảo...", theme.DocumentSaveIcon(), func() {
-		PlayUIClickSound()
-		ui.ShowExportDialog(ExportFormatPDF)
-	})
-
-	// Nút mở Cài đặt hệ thống (Chủ đề Sáng/Tối/Sepia & Âm thanh giao diện)
-	settingsHubBtn := widget.NewButtonWithIcon("Cài đặt (Chủ đề & Âm thanh)", theme.SettingsIcon(), func() {
-		ui.ShowSettingsDialog()
-	})
-
-	// Công tắc bật/tắt bộ gõ Tiếng Việt Telex nội bộ
-	telexCheck := widget.NewCheck("Bộ gõ Tiếng Việt Telex tích hợp", func(checked bool) {
-		GlobalTelexEnabled = checked
-		PlayUIClickSound()
-	})
-	telexCheck.SetChecked(GlobalTelexEnabled)
-
-	// Thanh công cụ thao tác nhanh cho Hồi / Chương / Cảnh
+	// Thanh công cụ cấu trúc cho Hồi / Chương / Cảnh
 	addActBtn := widget.NewButtonWithIcon("Hồi", theme.ContentAddIcon(), func() {
 		PlayUIClickSound()
 		ui.showAddActDialog()
@@ -435,13 +411,10 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 
 	ui.statusFooter = widget.NewLabel("Tổng số từ: 0")
 
+	// Phần đầu thanh bên trái gọn gàng: chỉ giữ hộp chọn Tác phẩm và thanh công cụ cấu trúc Hồi/Chương/Cảnh
 	topSidebarControls := container.NewVBox(
 		widget.NewLabelWithStyle("TÁC PHẨM ĐANG MỞ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ui.projectSelect,
-		worldHubBtn,
-		exportHubBtn,
-		settingsHubBtn,
-		telexCheck,
 		widget.NewSeparator(),
 		container.NewGridWithColumns(3, addActBtn, addChapBtn, addSceneBtn),
 		container.NewHBox(
@@ -455,6 +428,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 		widget.NewSeparator(),
 	)
 
+	// Sử dụng container.NewBorder để ui.tree ở vị trí Center tự động giãn kín toàn bộ chiều dọc còn lại
 	ui.sidebarBox = container.NewBorder(
 		topSidebarControls,
 		container.NewVBox(widget.NewSeparator(), ui.statusFooter),

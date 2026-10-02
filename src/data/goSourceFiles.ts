@@ -149,7 +149,7 @@ export const GO_SOURCE_FILES: GoSourceFile[] = [
     path: 'gonovelist/ui_main.go',
     layer: 'Tầng Giao Diện (Fyne v2 UI)',
     summary:
-      'Cửa sổ chính Fyne v2 tích hợp nút "Quản lý Thế giới & Thẻ", công tắc bật/tắt bộ gõ Tiếng Việt Telex và cây phân cấp Hồi -> Chương -> Cảnh.',
+      'Cửa sổ chính Fyne v2 với thanh menu toàn cục (Tệp, Cấu trúc, Thế giới & Thẻ, Chế độ xem, Cài đặt) và thanh bên trái tinh gọn dành trọn không gian cho cây phân cấp Hồi -> Chương -> Cảnh.',
     code: uiMainGoRaw,
   },
   {
