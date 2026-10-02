@@ -18,7 +18,7 @@ const (
 	StatusEdited    SceneStatus = "Đã biên tập"
 )
 
-// EntityType định danh loại thực thể trong bảng ánh xạ thẻ đa năng (entity_tags).
+// EntityType định danh loại thực thể cho hệ thống Thẻ phân tách theo danh mục (character / location / prop / event).
 type EntityType string
 
 const (
@@ -27,6 +27,70 @@ const (
 	EntityProp      EntityType = "prop"
 	EntityEvent     EntityType = "event"
 )
+
+// AllEntityTypes trả về danh sách tất cả các phân nhóm thực thể hỗ trợ gắn thẻ riêng biệt.
+func AllEntityTypes() []EntityType {
+	return []EntityType{
+		EntityCharacter,
+		EntityLocation,
+		EntityProp,
+		EntityEvent,
+	}
+}
+
+// EntityTypeTagLabel trả về tên hiển thị Tiếng Việt của danh mục Thẻ tương ứng.
+func EntityTypeTagLabel(et EntityType) string {
+	switch et {
+	case EntityCharacter:
+		return "Thẻ Nhân Vật"
+	case EntityLocation:
+		return "Thẻ Địa Điểm"
+	case EntityProp:
+		return "Thẻ Vật Phẩm"
+	case EntityEvent:
+		return "Thẻ Sự Kiện"
+	default:
+		return "Thẻ Nhân Vật"
+	}
+}
+
+// AllEntityTypeTagLabels trả về danh sách nhãn Tiếng Việt của 4 danh mục Thẻ.
+func AllEntityTypeTagLabels() []string {
+	return []string{
+		EntityTypeTagLabel(EntityCharacter),
+		EntityTypeTagLabel(EntityLocation),
+		EntityTypeTagLabel(EntityProp),
+		EntityTypeTagLabel(EntityEvent),
+	}
+}
+
+// ParseEntityTypeTagLabel chuyển đổi nhãn Tiếng Việt trên giao diện về mã EntityType.
+func ParseEntityTypeTagLabel(label string) EntityType {
+	switch strings.TrimSpace(label) {
+	case "Thẻ Địa Điểm", string(EntityLocation):
+		return EntityLocation
+	case "Thẻ Vật Phẩm", string(EntityProp):
+		return EntityProp
+	case "Thẻ Sự Kiện", string(EntityEvent):
+		return EntityEvent
+	default:
+		return EntityCharacter
+	}
+}
+
+// NormalizeEntityType chuẩn hóa chuỗi entity_type từ cơ sở dữ liệu.
+func NormalizeEntityType(raw string) EntityType {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(EntityLocation):
+		return EntityLocation
+	case string(EntityProp):
+		return EntityProp
+	case string(EntityEvent):
+		return EntityEvent
+	default:
+		return EntityCharacter
+	}
+}
 
 // AllSceneStatuses trả về danh sách các trạng thái chuẩn tiếng Việt cho UI.
 func AllSceneStatuses() []string {
@@ -88,12 +152,13 @@ type Chapter struct {
 // DefaultTagColor là mã màu Hex mặc định cho Thẻ mới nếu người dùng chưa chọn màu.
 const DefaultTagColor = "#3498db"
 
-// Tag đại diện cho một Thẻ phân loại đa năng có mã màu Hex trong tác phẩm (Ví dụ: "Thiên giới", "Khu vực cấm").
+// Tag đại diện cho một Thẻ phân loại có màu sắc và được cô lập riêng theo từng danh mục thực thể (EntityType).
 type Tag struct {
-	ID     int64
-	BookID int64
-	Name   string
-	Color  string
+	ID         int64
+	BookID     int64
+	EntityType EntityType
+	Name       string
+	Color      string
 }
 
 // TagColorPreset định nghĩa một mẫu màu gợi ý kèm tên gọi Tiếng Việt cho giao diện chọn màu thẻ.

@@ -115,6 +115,7 @@ func (s *Store) Migrate() error {
 	CREATE TABLE IF NOT EXISTS tags (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		book_id INTEGER NOT NULL,
+		entity_type TEXT NOT NULL DEFAULT 'character',
 		name TEXT NOT NULL,
 		color TEXT NOT NULL DEFAULT '#3498db',
 		FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -175,22 +176,23 @@ func (s *Store) Migrate() error {
 		return err
 	}
 
-	// Migration an toàn cho các cơ sở dữ liệu cũ chưa có cột color trong bảng tags
-	if err := s.ensureTagColorColumn(); err != nil {
+	// Migration an toàn cho các cơ sở dữ liệu cũ chưa có cột color hoặc entity_type trong bảng tags
+	if err := s.ensureTagColumnsAndMigrateCategories(); err != nil {
 		return err
 	}
 	return nil
 }
 
-// ensureTagColorColumn kiểm tra bảng tags hiện có và tự động thêm cột color TEXT DEFAULT '#3498db' nếu chưa tồn tại.
-func (s *Store) ensureTagColorColumn() error {
+// ensureTagColumnsAndMigrateCategories kiểm tra bảng tags hiện có, tự động bổ sung cột color và entity_type,
+// đồng thời tách riêng các thẻ dùng chung trước đây thành các thẻ độc lập theo từng danh mục (character/location/prop/event).
+func (s *Store) ensureTagColumnsAndMigrateCategories() error {
 	rows, err := s.db.Query(`PRAGMA table_info(tags)`)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
 	hasColorCol := false
+	hasEntityTypeCol := false
 	for rows.Next() {
 		var cid int
 		var name, colType string
@@ -200,18 +202,74 @@ func (s *Store) ensureTagColorColumn() error {
 		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err == nil {
 			if strings.EqualFold(name, "color") {
 				hasColorCol = true
-				break
+			}
+			if strings.EqualFold(name, "entity_type") {
+				hasEntityTypeCol = true
 			}
 		}
 	}
+	_ = rows.Close()
 
 	if !hasColorCol {
 		if _, err := s.db.Exec(`ALTER TABLE tags ADD COLUMN color TEXT DEFAULT '#3498db'`); err != nil {
 			return fmt.Errorf("không thể nâng cấp cột color cho bảng tags: %w", err)
 		}
 	}
-
 	_, _ = s.db.Exec(`UPDATE tags SET color = '#3498db' WHERE color IS NULL OR TRIM(color) = ''`)
+
+	if !hasEntityTypeCol {
+		if _, err := s.db.Exec(`ALTER TABLE tags ADD COLUMN entity_type TEXT DEFAULT 'character'`); err != nil {
+			return fmt.Errorf("không thể nâng cấp cột entity_type cho bảng tags: %w", err)
+		}
+		// Gán entity_type ban đầu dựa trên bảng ánh xạ entity_tags (nếu thẻ đã được gắn cho thực thể)
+		_, _ = s.db.Exec(`
+			UPDATE tags
+			SET entity_type = COALESCE(
+				(SELECT et.entity_type FROM entity_tags et WHERE et.tag_id = tags.id LIMIT 1),
+				'character'
+			)
+		`)
+	}
+	_, _ = s.db.Exec(`UPDATE tags SET entity_type = 'character' WHERE entity_type IS NULL OR TRIM(entity_type) = ''`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tags_book_type ON tags(book_id, entity_type)`)
+
+	// Nếu có bản ghi trong entity_tags gắn thẻ khác danh mục (do dữ liệu cũ dùng chung thẻ toàn cục),
+	// tự động nhân bản sang thẻ riêng của danh mục đó để đảm bảo tính cô lập tuyệt đối.
+	type crossLink struct {
+		entityType string
+		entityID   int64
+		oldTagID   int64
+		bookID     int64
+		tagName    string
+		tagColor   string
+	}
+	mismatchedRows, err := s.db.Query(`
+		SELECT et.entity_type, et.entity_id, et.tag_id, t.book_id, t.name, COALESCE(t.color, '#3498db')
+		FROM entity_tags et
+		INNER JOIN tags t ON t.id = et.tag_id
+		WHERE et.entity_type != t.entity_type
+	`)
+	if err == nil {
+		var links []crossLink
+		for mismatchedRows.Next() {
+			var cl crossLink
+			if err := mismatchedRows.Scan(&cl.entityType, &cl.entityID, &cl.oldTagID, &cl.bookID, &cl.tagName, &cl.tagColor); err == nil {
+				links = append(links, cl)
+			}
+		}
+		_ = mismatchedRows.Close()
+
+		for _, cl := range links {
+			scopedTag, err := s.CreateTagForType(cl.bookID, NormalizeEntityType(cl.entityType), cl.tagName, cl.tagColor)
+			if err == nil && scopedTag != nil {
+				_, _ = s.db.Exec(`DELETE FROM entity_tags WHERE entity_type = ? AND entity_id = ? AND tag_id = ?`,
+					cl.entityType, cl.entityID, cl.oldTagID)
+				_, _ = s.db.Exec(`INSERT OR IGNORE INTO entity_tags (entity_type, entity_id, tag_id) VALUES (?, ?, ?)`,
+					cl.entityType, cl.entityID, scopedTag.ID)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -239,22 +297,18 @@ func (s *Store) SeedDefaultProjectIfEmpty() error {
 }
 
 func (s *Store) seedWorldBuildingExtrasForProject(bookID int64) error {
-	tagCoVat, err := s.CreateTag(bookID, "Cổ vật", "#f39c12")
-	if err != nil {
-		return err
-	}
-	tagKhuVucCam, err := s.CreateTag(bookID, "Khu vực cấm", "#e74c3c")
-	if err != nil {
-		return err
-	}
-	tagThienGioi, err := s.CreateTag(bookID, "Thiên giới", "#9b59b6")
-	if err != nil {
-		return err
-	}
-	tagHoangGia, err := s.CreateTag(bookID, "Bí mật triều đình", "#3498db")
-	if err != nil {
-		return err
-	}
+	// Khởi tạo bộ Thẻ riêng biệt cho từng Danh mục (Nhân vật, Địa điểm, Vật phẩm, Sự kiện)
+	charTagTrietGia, _ := s.CreateTagForType(bookID, EntityCharacter, "Bí mật triều đình", "#3498db")
+	_, _ = s.CreateTagForType(bookID, EntityCharacter, "Hội Hoa Tiêu", "#2ecc71")
+
+	locTagCamDia, _ := s.CreateTagForType(bookID, EntityLocation, "Khu vực cấm", "#e74c3c")
+	_, _ = s.CreateTagForType(bookID, EntityLocation, "Thương cảng cổ", "#1abc9c")
+
+	propTagCoVat, _ := s.CreateTagForType(bookID, EntityProp, "Cổ vật", "#f39c12")
+	propTagBauVat, _ := s.CreateTagForType(bookID, EntityProp, "Báu vật hoàng gia", "#e67e22")
+
+	evTagThienVan, _ := s.CreateTagForType(bookID, EntityEvent, "Thiên tượng kỳ bí", "#9b59b6")
+	evTagLichSu, _ := s.CreateTagForType(bookID, EntityEvent, "Biến cố lịch sử", "#d81b60")
 
 	prop1, err := s.CreateProp(
 		bookID,
@@ -263,8 +317,8 @@ func (s *Store) seedWorldBuildingExtrasForProject(bookID int64) error {
 		"Phiến pha lê thế kỷ XVII có vết rạn ẩn chứa hải đồ ra đảo sương mù.",
 		"Chìa khóa duy nhất giải mã luồng lạch qua rạn đá ngầm Nam Hải.",
 	)
-	if err == nil {
-		_ = s.SetEntityTags(EntityProp, prop1.ID, []int64{tagCoVat.ID, tagHoangGia.ID})
+	if err == nil && propTagCoVat != nil && propTagBauVat != nil {
+		_ = s.SetEntityTags(EntityProp, prop1.ID, []int64{propTagCoVat.ID, propTagBauVat.ID})
 	}
 
 	prop2, err := s.CreateProp(
@@ -274,8 +328,8 @@ func (s *Store) seedWorldBuildingExtrasForProject(bookID int64) error {
 		"Chiếc la bàn đồng cổ của thuyền trưởng Trần Đình Bách có kim chỉ hướng lệch theo từ trường đảo ngầm.",
 		"Giúp định vị phương vị Sao Khuê trong đêm sương.",
 	)
-	if err == nil {
-		_ = s.SetEntityTags(EntityProp, prop2.ID, []int64{tagCoVat.ID})
+	if err == nil && propTagCoVat != nil {
+		_ = s.SetEntityTags(EntityProp, prop2.ID, []int64{propTagCoVat.ID})
 	}
 
 	ev1, err := s.CreateEvent(
@@ -284,8 +338,8 @@ func (s *Store) seedWorldBuildingExtrasForProject(bookID int64) error {
 		1,
 		"Đội thuyền buôn chở cặp thấu kính song sinh đột ngột mất tích giữa vùng biển sương mù 80 năm trước.",
 	)
-	if err == nil {
-		_ = s.SetEntityTags(EntityEvent, ev1.ID, []int64{tagHoangGia.ID, tagKhuVucCam.ID})
+	if err == nil && evTagLichSu != nil {
+		_ = s.SetEntityTags(EntityEvent, ev1.ID, []int64{evTagLichSu.ID})
 	}
 
 	ev2, err := s.CreateEvent(
@@ -294,18 +348,18 @@ func (s *Store) seedWorldBuildingExtrasForProject(bookID int64) error {
 		2,
 		"Thời điểm duy nhất trong năm khi rạn đá ngầm hạ thấp, mở lối vào ngọn hải đăng cổ.",
 	)
-	if err == nil {
-		_ = s.SetEntityTags(EntityEvent, ev2.ID, []int64{tagThienGioi.ID, tagKhuVucCam.ID})
+	if err == nil && evTagThienVan != nil && evTagLichSu != nil {
+		_ = s.SetEntityTags(EntityEvent, ev2.ID, []int64{evTagThienVan.ID, evTagLichSu.ID})
 	}
 
-	// Gắn thẻ mẫu cho nhân vật và địa điểm đầu tiên (nếu có)
+	// Gắn thẻ mẫu theo đúng danh mục cho nhân vật và địa điểm đầu tiên (nếu có)
 	chars, _ := s.ListCharacters(bookID)
-	if len(chars) > 0 {
-		_ = s.SetEntityTags(EntityCharacter, chars[0].ID, []int64{tagHoangGia.ID})
+	if len(chars) > 0 && charTagTrietGia != nil {
+		_ = s.SetEntityTags(EntityCharacter, chars[0].ID, []int64{charTagTrietGia.ID})
 	}
 	locs, _ := s.ListLocations(bookID)
-	if len(locs) > 0 {
-		_ = s.SetEntityTags(EntityLocation, locs[0].ID, []int64{tagKhuVucCam.ID})
+	if len(locs) > 0 && locTagCamDia != nil {
+		_ = s.SetEntityTags(EntityLocation, locs[0].ID, []int64{locTagCamDia.ID})
 	}
 	return nil
 }
@@ -323,40 +377,48 @@ func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 		return nil, err
 	}
 
-	tagCoVat, _ := s.CreateTag(proj.ID, "Cổ vật", "#f39c12")
-	tagKhuVucCam, _ := s.CreateTag(proj.ID, "Khu vực cấm", "#e74c3c")
-	tagThienGioi, _ := s.CreateTag(proj.ID, "Thiên giới", "#9b59b6")
-	tagHoangGia, _ := s.CreateTag(proj.ID, "Bí mật triều đình", "#3498db")
+	// Khởi tạo Thẻ mẫu cô lập theo từng Danh mục (Nhân vật, Địa điểm, Vật phẩm, Sự kiện)
+	charTagHoangGia, _ := s.CreateTagForType(proj.ID, EntityCharacter, "Bí mật triều đình", "#3498db")
+	charTagHoaTieu, _ := s.CreateTagForType(proj.ID, EntityCharacter, "Hội Hoa Tiêu", "#2ecc71")
+
+	locTagThuongCang, _ := s.CreateTagForType(proj.ID, EntityLocation, "Thương cảng cổ", "#1abc9c")
+	locTagKhuVucCam, _ := s.CreateTagForType(proj.ID, EntityLocation, "Khu vực cấm", "#e74c3c")
+
+	propTagCoVat, _ := s.CreateTagForType(proj.ID, EntityProp, "Cổ vật", "#f39c12")
+	propTagThienVan, _ := s.CreateTagForType(proj.ID, EntityProp, "Khí cụ thiên văn", "#e67e22")
+
+	evTagBienCo, _ := s.CreateTagForType(proj.ID, EntityEvent, "Biến cố lịch sử", "#d81b60")
+	evTagThienGioi, _ := s.CreateTagForType(proj.ID, EntityEvent, "Thiên tượng kỳ bí", "#9b59b6")
 
 	elena, err := s.CreateCharacter(proj.ID, "Lê Ngọc Liên", "Nhân vật chính", "Nghệ nhân chế tác và phục chế thấu kính tại phố cổ Hội An.")
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityCharacter, elena.ID, []int64{tagCoVat.ID, tagHoangGia.ID})
+	_ = s.SetEntityTags(EntityCharacter, elena.ID, []int64{charTagHoangGia.ID, charTagHoaTieu.ID})
 
 	julian, err := s.CreateCharacter(proj.ID, "Trần Đình Bách", "Đồng hành", "Thuyền trưởng tàu buôn từng đi qua vùng biển sương mù Nam Hải.")
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityCharacter, julian.ID, []int64{tagKhuVucCam.ID})
+	_ = s.SetEntityTags(EntityCharacter, julian.ID, []int64{charTagHoaTieu.ID})
 
 	archivist, err := s.CreateCharacter(proj.ID, "Cụ Thủ Từ Họ Phạm", "Người dẫn đường", "Người trông coi kho thư tịch cổ tại hội quán.")
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityCharacter, archivist.ID, []int64{tagHoangGia.ID, tagThienGioi.ID})
+	_ = s.SetEntityTags(EntityCharacter, archivist.ID, []int64{charTagHoangGia.ID})
 
 	observatory, err := s.CreateLocation(proj.ID, "Xưởng Thủy Tinh Phố Cổ", "Căn gác gỗ nhìn ra sông Thu Bồn với những lò nung pha lê và bàn mài thấu kính.")
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityLocation, observatory.ID, []int64{tagCoVat.ID})
+	_ = s.SetEntityTags(EntityLocation, observatory.ID, []int64{locTagThuongCang.ID})
 
 	vault, err := s.CreateLocation(proj.ID, "Thư Các Chùa Cầu", "Căn phòng lưu trữ bản đồ hàng hải và nhật ký thương thuyền trăm năm.")
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityLocation, vault.ID, []int64{tagKhuVucCam.ID, tagHoangGia.ID})
+	_ = s.SetEntityTags(EntityLocation, vault.ID, []int64{locTagKhuVucCam.ID, locTagThuongCang.ID})
 
 	propLens, err := s.CreateProp(
 		proj.ID,
@@ -368,7 +430,7 @@ func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityProp, propLens.ID, []int64{tagCoVat.ID, tagThienGioi.ID})
+	_ = s.SetEntityTags(EntityProp, propLens.ID, []int64{propTagCoVat.ID, propTagThienVan.ID})
 
 	propCompass, err := s.CreateProp(
 		proj.ID,
@@ -380,7 +442,7 @@ func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityProp, propCompass.ID, []int64{tagCoVat.ID})
+	_ = s.SetEntityTags(EntityProp, propCompass.ID, []int64{propTagCoVat.ID})
 
 	evShipwreck, err := s.CreateEvent(
 		proj.ID,
@@ -391,7 +453,7 @@ func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityEvent, evShipwreck.ID, []int64{tagHoangGia.ID, tagKhuVucCam.ID})
+	_ = s.SetEntityTags(EntityEvent, evShipwreck.ID, []int64{evTagBienCo.ID})
 
 	evEquinox, err := s.CreateEvent(
 		proj.ID,
@@ -402,7 +464,7 @@ func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = s.SetEntityTags(EntityEvent, evEquinox.ID, []int64{tagThienGioi.ID})
+	_ = s.SetEntityTags(EntityEvent, evEquinox.ID, []int64{evTagThienGioi.ID, evTagBienCo.ID})
 
 	act1, err := s.CreateAct(proj.ID, "Hồi I — Vết Rạn Trong Thấu Kính")
 	if err != nil {
@@ -989,11 +1051,17 @@ func (s *Store) MoveScene(sceneID int64, direction int) error {
 	return err
 }
 
-// ==================== UNIVERSAL TAGGING SYSTEM (tags & entity_tags) ====================
+// ==================== CATEGORY-SCOPED TAGGING SYSTEM (tags & entity_tags) ====================
 
-// ListTags trả về danh sách tất cả các Thẻ (kèm mã màu Hex) của một cuốn sách (book_id).
-func (s *Store) ListTags(bookID int64) ([]Tag, error) {
-	rows, err := s.db.Query(`SELECT id, book_id, name, COALESCE(color, '#3498db') FROM tags WHERE book_id = ? ORDER BY name ASC`, bookID)
+// GetTagsByType trả về danh sách các Thẻ (kèm mã màu Hex) thuộc riêng một danh mục thực thể (character / location / prop / event).
+func (s *Store) GetTagsByType(bookID int64, entityType EntityType) ([]Tag, error) {
+	cat := NormalizeEntityType(string(entityType))
+	rows, err := s.db.Query(`
+		SELECT id, book_id, COALESCE(entity_type, 'character'), name, COALESCE(color, '#3498db')
+		FROM tags
+		WHERE book_id = ? AND COALESCE(entity_type, 'character') = ?
+		ORDER BY name ASC
+	`, bookID, string(cat))
 	if err != nil {
 		return nil, err
 	}
@@ -1002,37 +1070,67 @@ func (s *Store) ListTags(bookID int64) ([]Tag, error) {
 	var list []Tag
 	for rows.Next() {
 		var t Tag
-		if err := rows.Scan(&t.ID, &t.BookID, &t.Name, &t.Color); err != nil {
+		var rawType string
+		if err := rows.Scan(&t.ID, &t.BookID, &rawType, &t.Name, &t.Color); err != nil {
 			return nil, err
 		}
+		t.EntityType = NormalizeEntityType(rawType)
 		t.Color = NormalizeHexColor(t.Color)
 		list = append(list, t)
 	}
 	return list, rows.Err()
 }
 
-// CreateTag tạo một Thẻ mới với mã màu tùy chọn (mặc định '#3498db' nếu không truyền màu).
-func (s *Store) CreateTag(bookID int64, name string, optionalColor ...string) (*Tag, error) {
+// ListTags trả về danh sách tất cả các Thẻ của một cuốn sách (book_id) sắp xếp theo danh mục và tên.
+func (s *Store) ListTags(bookID int64) ([]Tag, error) {
+	rows, err := s.db.Query(`
+		SELECT id, book_id, COALESCE(entity_type, 'character'), name, COALESCE(color, '#3498db')
+		FROM tags
+		WHERE book_id = ?
+		ORDER BY entity_type ASC, name ASC
+	`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Tag
+	for rows.Next() {
+		var t Tag
+		var rawType string
+		if err := rows.Scan(&t.ID, &t.BookID, &rawType, &t.Name, &t.Color); err != nil {
+			return nil, err
+		}
+		t.EntityType = NormalizeEntityType(rawType)
+		t.Color = NormalizeHexColor(t.Color)
+		list = append(list, t)
+	}
+	return list, rows.Err()
+}
+
+// CreateTagForType tạo một Thẻ mới gắn chặt với một danh mục thực thể (character/location/prop/event) và mã màu Hex.
+func (s *Store) CreateTagForType(bookID int64, entityType EntityType, name string, color string) (*Tag, error) {
 	clean := strings.TrimSpace(name)
 	if clean == "" {
 		return nil, fmt.Errorf("tên thẻ không được để trống")
 	}
-	hexColor := DefaultTagColor
-	if len(optionalColor) > 0 {
-		hexColor = NormalizeHexColor(optionalColor[0])
-	}
+	cat := NormalizeEntityType(string(entityType))
+	hexColor := NormalizeHexColor(color)
 
-	existing, _ := s.ListTags(bookID)
+	// Kiểm tra trùng tên trong cùng một danh mục (cho phép trùng tên nếu khác danh mục)
+	existing, _ := s.GetTagsByType(bookID, cat)
 	for _, t := range existing {
 		if strings.EqualFold(t.Name, clean) {
-			if len(optionalColor) > 0 && t.Color != hexColor {
-				_ = s.UpdateTag(t.ID, clean, hexColor)
+			if t.Color != hexColor {
+				_ = s.UpdateTag(t.ID, clean, hexColor, cat)
 				t.Color = hexColor
 			}
 			return &t, nil
 		}
 	}
-	res, err := s.db.Exec(`INSERT INTO tags (book_id, name, color) VALUES (?, ?, ?)`, bookID, clean, hexColor)
+
+	res, err := s.db.Exec(`INSERT INTO tags (book_id, entity_type, name, color) VALUES (?, ?, ?, ?)`,
+		bookID, string(cat), clean, hexColor)
 	if err != nil {
 		return nil, err
 	}
@@ -1040,16 +1138,41 @@ func (s *Store) CreateTag(bookID int64, name string, optionalColor ...string) (*
 	if err != nil {
 		return nil, err
 	}
-	return &Tag{ID: id, BookID: bookID, Name: clean, Color: hexColor}, nil
+	return &Tag{
+		ID:         id,
+		BookID:     bookID,
+		EntityType: cat,
+		Name:       clean,
+		Color:      hexColor,
+	}, nil
 }
 
-// UpdateTag cập nhật tên và mã màu Hex của một Thẻ đã tồn tại.
-func (s *Store) UpdateTag(tagID int64, name string, color string) error {
+// CreateTag tạo một Thẻ mới với mã màu và danh mục tùy chọn (mặc định '#3498db' và 'character').
+func (s *Store) CreateTag(bookID int64, name string, optionalColorAndType ...string) (*Tag, error) {
+	hexColor := DefaultTagColor
+	cat := EntityCharacter
+	if len(optionalColorAndType) > 0 && strings.TrimSpace(optionalColorAndType[0]) != "" {
+		hexColor = NormalizeHexColor(optionalColorAndType[0])
+	}
+	if len(optionalColorAndType) > 1 && strings.TrimSpace(optionalColorAndType[1]) != "" {
+		cat = NormalizeEntityType(optionalColorAndType[1])
+	}
+	return s.CreateTagForType(bookID, cat, name, hexColor)
+}
+
+// UpdateTag cập nhật tên, mã màu Hex và danh mục (nếu truyền vào) của một Thẻ đã tồn tại.
+func (s *Store) UpdateTag(tagID int64, name string, color string, optionalEntityType ...EntityType) error {
 	clean := strings.TrimSpace(name)
 	if clean == "" {
 		return fmt.Errorf("tên thẻ không được để trống")
 	}
 	hexColor := NormalizeHexColor(color)
+	if len(optionalEntityType) > 0 {
+		cat := NormalizeEntityType(string(optionalEntityType[0]))
+		_, err := s.db.Exec(`UPDATE tags SET name = ?, color = ?, entity_type = ? WHERE id = ?`,
+			clean, hexColor, string(cat), tagID)
+		return err
+	}
 	_, err := s.db.Exec(`UPDATE tags SET name = ?, color = ? WHERE id = ?`, clean, hexColor, tagID)
 	return err
 }
@@ -1060,15 +1183,16 @@ func (s *Store) DeleteTag(tagID int64) error {
 	return err
 }
 
-// GetEntityTags trả về danh sách các Thẻ (kèm mã màu Hex) được gắn cho một thực thể cụ thể (character/location/prop/event).
+// GetEntityTags trả về danh sách các Thẻ (kèm mã màu Hex) thuộc đúng danh mục của thực thể cụ thể.
 func (s *Store) GetEntityTags(entityType EntityType, entityID int64) ([]Tag, error) {
+	cat := NormalizeEntityType(string(entityType))
 	rows, err := s.db.Query(`
-		SELECT t.id, t.book_id, t.name, COALESCE(t.color, '#3498db')
+		SELECT t.id, t.book_id, COALESCE(t.entity_type, 'character'), t.name, COALESCE(t.color, '#3498db')
 		FROM tags t
 		INNER JOIN entity_tags et ON et.tag_id = t.id
-		WHERE et.entity_type = ? AND et.entity_id = ?
+		WHERE et.entity_type = ? AND et.entity_id = ? AND COALESCE(t.entity_type, 'character') = ?
 		ORDER BY t.name ASC
-	`, string(entityType), entityID)
+	`, string(cat), entityID, string(cat))
 	if err != nil {
 		return nil, err
 	}
@@ -1077,29 +1201,34 @@ func (s *Store) GetEntityTags(entityType EntityType, entityID int64) ([]Tag, err
 	var tags []Tag
 	for rows.Next() {
 		var t Tag
-		if err := rows.Scan(&t.ID, &t.BookID, &t.Name, &t.Color); err != nil {
+		var rawType string
+		if err := rows.Scan(&t.ID, &t.BookID, &rawType, &t.Name, &t.Color); err != nil {
 			return nil, err
 		}
+		t.EntityType = NormalizeEntityType(rawType)
 		t.Color = NormalizeHexColor(t.Color)
 		tags = append(tags, t)
 	}
 	return tags, rows.Err()
 }
 
-// SetEntityTags cập nhật danh sách ID thẻ được gắn cho một thực thể trong bảng entity_tags.
+// SetEntityTags cập nhật danh sách ID thẻ được gắn cho một thực thể trong bảng entity_tags (chỉ chấp nhận thẻ cùng entity_type).
 func (s *Store) SetEntityTags(entityType EntityType, entityID int64, tagIDs []int64) error {
+	cat := NormalizeEntityType(string(entityType))
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.Exec(`DELETE FROM entity_tags WHERE entity_type = ? AND entity_id = ?`, string(entityType), entityID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM entity_tags WHERE entity_type = ? AND entity_id = ?`, string(cat), entityID); err != nil {
 		return err
 	}
 	for _, tid := range tagIDs {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO entity_tags (entity_type, entity_id, tag_id) VALUES (?, ?, ?)`,
-			string(entityType), entityID, tid); err != nil {
+		if _, err := tx.Exec(`
+			INSERT OR IGNORE INTO entity_tags (entity_type, entity_id, tag_id)
+			SELECT ?, ?, id FROM tags WHERE id = ? AND COALESCE(entity_type, 'character') = ?
+		`, string(cat), entityID, tid, string(cat)); err != nil {
 			return err
 		}
 	}

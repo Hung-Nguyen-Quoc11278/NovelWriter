@@ -70,10 +70,11 @@ CREATE TABLE IF NOT EXISTS events (
     FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
--- Hệ thống Thẻ đa năng có phân loại màu sắc (Universal Color-Coded Tagging System)
+-- Hệ thống Thẻ phân tách theo từng Danh mục Thực thể & Màu sắc (Category-Scoped Color-Coded Tag System)
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL,
+    entity_type TEXT NOT NULL DEFAULT 'character',
     name TEXT NOT NULL,
     color TEXT NOT NULL DEFAULT '#3498db',
     FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -137,5 +138,5 @@ CREATE INDEX IF NOT EXISTS idx_chapters_act_pos ON chapters(act_id, position);
 CREATE INDEX IF NOT EXISTS idx_scenes_chapter_pos ON scenes(chapter_id, position);
 CREATE INDEX IF NOT EXISTS idx_props_book ON props(book_id);
 CREATE INDEX IF NOT EXISTS idx_events_book_order ON events(book_id, timeline_order);
-CREATE INDEX IF NOT EXISTS idx_tags_book ON tags(book_id);
+CREATE INDEX IF NOT EXISTS idx_tags_book ON tags(book_id, entity_type);
 CREATE INDEX IF NOT EXISTS idx_entity_tags_lookup ON entity_tags(entity_type, entity_id);

@@ -52,16 +52,25 @@ func firstTagColorOrDefault(tags []Tag) string {
 	return "#94a3b8"
 }
 
-const allTagsFilterLabel = "Tất cả thẻ"
+const (
+	allTagsFilterLabel       = "Tất cả thẻ"
+	allCategoriesFilterLabel = "Tất cả danh mục thẻ"
+)
 
-// WorldBuildingHub quản lý cửa sổ đa tab cho Nhân vật, Địa điểm, Vật phẩm, Sự kiện và Hệ thống Thẻ.
+// WorldBuildingHub quản lý cửa sổ đa tab cho Nhân vật, Địa điểm, Vật phẩm, Sự kiện và Hệ thống Thẻ phân tách theo Danh mục.
 type WorldBuildingHub struct {
 	store     *Store
 	parentWin fyne.Window
 	bookID    int64
 	onUpdated func()
 
-	tags []Tag
+	// Danh sách Thẻ được cô lập riêng biệt theo từng loại thực thể (EntityType)
+	charTags     []Tag
+	locTags      []Tag
+	propTags     []Tag
+	eventTags    []Tag
+	tags         []Tag
+	filteredTags []Tag
 
 	// Dữ liệu đã lọc cho từng Tab
 	filteredChars  []Character
@@ -70,16 +79,18 @@ type WorldBuildingHub struct {
 	filteredEvents []Event
 
 	// Trạng thái bộ lọc theo thẻ của từng Tab
-	charTagFilter  string
-	locTagFilter   string
-	propTagFilter  string
-	eventTagFilter string
+	charTagFilter            string
+	locTagFilter             string
+	propTagFilter            string
+	eventTagFilter           string
+	tagManagerCategoryFilter string
 
 	// Các widget bộ lọc theo thẻ
-	charFilterSelect  *widget.Select
-	locFilterSelect   *widget.Select
-	propFilterSelect  *widget.Select
-	eventFilterSelect *widget.Select
+	charFilterSelect       *widget.Select
+	locFilterSelect        *widget.Select
+	propFilterSelect       *widget.Select
+	eventFilterSelect      *widget.Select
+	tagManagerFilterSelect *widget.Select
 
 	// Danh sách hiển thị (widget.List)
 	charList  *widget.List
@@ -119,36 +130,39 @@ type WorldBuildingHub struct {
 	eventDescEntry  *VietnameseEntry
 	eventTagCheck   *widget.CheckGroup
 
-	// Biểu mẫu Quản lý Thẻ toàn cục & Chọn màu sắc thẻ
-	newTagEntry         *VietnameseEntry
-	quickColorSelect    *widget.Select
-	quickColorCircle    *canvas.Circle
-	tagFormNameEntry    *VietnameseEntry
-	tagFormHexEntry     *VietnameseEntry
-	tagFormPresetSelect *widget.Select
-	tagFormPreviewDot   *canvas.Circle
-	tagFormPreviewBg    *canvas.Rectangle
-	tagFormPreviewLabel *widget.Label
+	// Biểu mẫu Quản lý Thẻ theo danh mục & Chọn màu sắc thẻ
+	newTagEntry           *VietnameseEntry
+	quickCategorySelect   *widget.Select
+	quickColorSelect      *widget.Select
+	quickColorCircle      *canvas.Circle
+	tagFormCategorySelect *widget.Select
+	tagFormNameEntry      *VietnameseEntry
+	tagFormHexEntry       *VietnameseEntry
+	tagFormPresetSelect   *widget.Select
+	tagFormPreviewDot     *canvas.Circle
+	tagFormPreviewBg      *canvas.Rectangle
+	tagFormPreviewLabel   *widget.Label
 }
 
 // ShowWorldBuildingHub mở Trung tâm Quản lý Thế giới & Hệ thống Thẻ Đa năng (Multi-Tab Dialog).
 func ShowWorldBuildingHub(store *Store, parentWin fyne.Window, bookID int64, onUpdated func()) {
 	hub := &WorldBuildingHub{
-		store:          store,
-		parentWin:      parentWin,
-		bookID:         bookID,
-		onUpdated:      onUpdated,
-		charTagFilter:  allTagsFilterLabel,
-		locTagFilter:   allTagsFilterLabel,
-		propTagFilter:  allTagsFilterLabel,
-		eventTagFilter: allTagsFilterLabel,
+		store:                    store,
+		parentWin:                parentWin,
+		bookID:                   bookID,
+		onUpdated:                onUpdated,
+		charTagFilter:            allTagsFilterLabel,
+		locTagFilter:             allTagsFilterLabel,
+		propTagFilter:            allTagsFilterLabel,
+		eventTagFilter:           allTagsFilterLabel,
+		tagManagerCategoryFilter: allCategoriesFilterLabel,
 	}
 
 	content := hub.buildContent()
 	hub.reloadAllData()
 
-	d := dialog.NewCustom("Trung Tâm Xây Dựng Thế Giới & Quản Lý Thẻ", "Đóng cửa sổ", content, parentWin)
-	d.Resize(fyne.NewSize(1120, 720))
+	d := dialog.NewCustom("Trung Tâm Xây Dựng Thế Giới & Quản Lý Thẻ Theo Danh Mục", "Đóng cửa sổ", content, parentWin)
+	d.Resize(fyne.NewSize(1140, 740))
 	d.SetOnClosed(func() {
 		if hub.onUpdated != nil {
 			hub.onUpdated()
@@ -158,9 +172,18 @@ func ShowWorldBuildingHub(store *Store, parentWin fyne.Window, bookID int64, onU
 }
 
 func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
-	// Thanh tạo Thẻ nhanh ở trên cùng kèm chọn Màu sắc thẻ (Global Tag Bar)
+	// Thanh tạo Thẻ nhanh ở trên cùng kèm chọn Danh mục thẻ & Màu sắc thẻ
 	h.newTagEntry = NewVietEntry()
-	h.newTagEntry.SetPlaceHolder("Nhập tên thẻ mới (VD: Thiên giới, Khu vực cấm, Cổ vật)...")
+	h.newTagEntry.SetPlaceHolder("Nhập tên thẻ mới cho danh mục đang chọn...")
+
+	categoryLabels := AllEntityTypeTagLabels()
+	selectedQuickCategory := EntityCharacter
+	h.quickCategorySelect = widget.NewSelect(categoryLabels, func(selected string) {
+		selectedQuickCategory = ParseEntityTypeTagLabel(selected)
+	})
+	if len(categoryLabels) > 0 {
+		h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityCharacter))
+	}
 
 	presets := DefaultTagColorPresets()
 	presetLabels := make([]string, len(presets))
@@ -190,7 +213,7 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 		if name == "" {
 			return
 		}
-		if _, err := h.store.CreateTag(h.bookID, name, selectedQuickHex); err != nil {
+		if _, err := h.store.CreateTagForType(h.bookID, selectedQuickCategory, name, selectedQuickHex); err != nil {
 			dialog.ShowError(err, h.parentWin)
 			return
 		}
@@ -203,6 +226,8 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 	quickAddTagBtn.Importance = widget.HighImportance
 
 	rightQuickControls := container.NewHBox(
+		widget.NewLabel("Danh mục:"),
+		h.quickCategorySelect,
 		widget.NewLabel("Màu sắc thẻ:"),
 		container.NewCenter(quickDotBox),
 		h.quickColorSelect,
@@ -217,18 +242,31 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 		h.newTagEntry,
 	)
 
-	tabs := container.NewAppTabs(
-		container.NewTabItem("Nhân vật", h.buildCharactersTab()),
-		container.NewTabItem("Địa điểm", h.buildLocationsTab()),
-		container.NewTabItem("Vật phẩm", h.buildPropsTab()),
-		container.NewTabItem("Sự kiện", h.buildEventsTab()),
-		container.NewTabItem("Quản lý Thẻ", h.buildTagManagerTab()),
-	)
+	tabChars := container.NewTabItem("Nhân vật", h.buildCharactersTab())
+	tabLocs := container.NewTabItem("Địa điểm", h.buildLocationsTab())
+	tabProps := container.NewTabItem("Vật phẩm", h.buildPropsTab())
+	tabEvents := container.NewTabItem("Sự kiện", h.buildEventsTab())
+	tabTags := container.NewTabItem("Quản lý Thẻ", h.buildTagManagerTab())
+
+	tabs := container.NewAppTabs(tabChars, tabLocs, tabProps, tabEvents, tabTags)
+	// Tự động đồng bộ Danh mục thẻ trên thanh tạo nhanh khi người dùng chuyển đổi giữa các Tab thực thể
+	tabs.OnSelected = func(item *container.TabItem) {
+		switch item {
+		case tabChars:
+			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityCharacter))
+		case tabLocs:
+			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityLocation))
+		case tabProps:
+			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityProp))
+		case tabEvents:
+			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityEvent))
+		}
+	}
 
 	return container.NewBorder(globalTagHeader, nil, nil, nil, tabs)
 }
 
-// ==================== TAB 1: NHÂN VẬT (CHARACTERS) ====================
+// ==================== TAB 1: NHÂN VẬT (CHARACTERS - THẺ NHÂN VẬT RIÊNG BIỆT) ====================
 
 func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 	h.charFilterSelect = widget.NewSelect([]string{allTagsFilterLabel}, func(selected string) {
@@ -244,7 +282,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Tên nhân vật", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
-			sub := widget.NewLabel("Vai trò • #Thẻ")
+			sub := widget.NewLabel("Vai trò • #Thẻ Nhân Vật")
 			sub.Truncation = fyne.TextTruncateEllipsis
 			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
 			return container.NewVBox(title, subRow)
@@ -299,6 +337,11 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		h.charTagCheck.SetSelected(extractTagNames(c.Tags))
 	}
 
+	addCharTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Nhân Vật", theme.ContentAddIcon(), func() {
+		h.showCreateScopedTagDialog(EntityCharacter, h.charTagCheck)
+	})
+	addCharTagBtn.Importance = widget.LowImportance
+
 	newBtn := widget.NewButtonWithIcon("Làm mới biểu mẫu", theme.DocumentCreateIcon(), func() {
 		h.clearCharacterForm()
 	})
@@ -312,7 +355,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		if role == "" {
 			role = "Nhân vật chính"
 		}
-		tagIDs := h.resolveSelectedTagIDs(h.charTagCheck.Selected)
+		tagIDs := h.resolveSelectedTagIDsForType(EntityCharacter, h.charTagCheck.Selected)
 
 		if h.selectedCharID == 0 {
 			created, err := h.store.CreateCharacter(h.bookID, name, role, h.charDescEntry.Text)
@@ -357,12 +400,18 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 
 	leftPane := container.NewBorder(
 		container.NewVBox(
-			widget.NewLabelWithStyle("Lọc theo thẻ:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabelWithStyle("Lọc theo Thẻ Nhân Vật:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			h.charFilterSelect,
 			widget.NewSeparator(),
 		),
 		nil, nil, nil,
 		h.charList,
+	)
+
+	tagSectionHeader := container.NewBorder(
+		nil, nil,
+		widget.NewLabelWithStyle("GẮN THẺ NHÂN VẬT (CHỈ HIỂN THỊ THẺ NHÂN VẬT)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		addCharTagBtn,
 	)
 
 	rightForm := container.NewVScroll(container.NewVBox(
@@ -373,7 +422,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 			widget.NewFormItem("Mô tả & Tiểu sử", h.charDescEntry),
 		),
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("GẮN THẺ PHÂN LOẠI (TAGS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		tagSectionHeader,
 		h.charTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
@@ -393,7 +442,7 @@ func (h *WorldBuildingHub) clearCharacterForm() {
 	h.charTagCheck.SetSelected([]string{})
 }
 
-// ==================== TAB 2: ĐỊA ĐIỂM (LOCATIONS) ====================
+// ==================== TAB 2: ĐỊA ĐIỂM (LOCATIONS - THẺ ĐỊA ĐIỂM RIÊNG BIỆT) ====================
 
 func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 	h.locFilterSelect = widget.NewSelect([]string{allTagsFilterLabel}, func(selected string) {
@@ -409,7 +458,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Tên địa điểm", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
-			sub := widget.NewLabel("#Thẻ")
+			sub := widget.NewLabel("#Thẻ Địa Điểm")
 			sub.Truncation = fyne.TextTruncateEllipsis
 			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
 			return container.NewVBox(title, subRow)
@@ -460,6 +509,11 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		h.locTagCheck.SetSelected(extractTagNames(l.Tags))
 	}
 
+	addLocTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Địa Điểm", theme.ContentAddIcon(), func() {
+		h.showCreateScopedTagDialog(EntityLocation, h.locTagCheck)
+	})
+	addLocTagBtn.Importance = widget.LowImportance
+
 	newBtn := widget.NewButtonWithIcon("Làm mới biểu mẫu", theme.DocumentCreateIcon(), func() {
 		h.clearLocationForm()
 	})
@@ -469,7 +523,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		if name == "" {
 			return
 		}
-		tagIDs := h.resolveSelectedTagIDs(h.locTagCheck.Selected)
+		tagIDs := h.resolveSelectedTagIDsForType(EntityLocation, h.locTagCheck.Selected)
 
 		if h.selectedLocID == 0 {
 			created, err := h.store.CreateLocation(h.bookID, name, h.locDescEntry.Text)
@@ -513,12 +567,18 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 
 	leftPane := container.NewBorder(
 		container.NewVBox(
-			widget.NewLabelWithStyle("Lọc theo thẻ:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabelWithStyle("Lọc theo Thẻ Địa Điểm:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			h.locFilterSelect,
 			widget.NewSeparator(),
 		),
 		nil, nil, nil,
 		h.locList,
+	)
+
+	tagSectionHeader := container.NewBorder(
+		nil, nil,
+		widget.NewLabelWithStyle("GẮN THẺ ĐỊA ĐIỂM (CHỈ HIỂN THỊ THẺ ĐỊA ĐIỂM)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		addLocTagBtn,
 	)
 
 	rightForm := container.NewVScroll(container.NewVBox(
@@ -528,7 +588,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 			widget.NewFormItem("Mô tả chi tiết", h.locDescEntry),
 		),
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("GẮN THẺ PHÂN LOẠI (TAGS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		tagSectionHeader,
 		h.locTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
@@ -547,7 +607,7 @@ func (h *WorldBuildingHub) clearLocationForm() {
 	h.locTagCheck.SetSelected([]string{})
 }
 
-// ==================== TAB 3: VẬT PHẨM (PROPS) ====================
+// ==================== TAB 3: VẬT PHẨM (PROPS - THẺ VẬT PHẨM RIÊNG BIỆT) ====================
 
 func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 	h.propFilterSelect = widget.NewSelect([]string{allTagsFilterLabel}, func(selected string) {
@@ -563,7 +623,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Tên vật phẩm", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
-			sub := widget.NewLabel("Phân loại • #Thẻ")
+			sub := widget.NewLabel("Phân loại • #Thẻ Vật Phẩm")
 			sub.Truncation = fyne.TextTruncateEllipsis
 			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
 			return container.NewVBox(title, subRow)
@@ -623,6 +683,11 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		h.propTagCheck.SetSelected(extractTagNames(p.Tags))
 	}
 
+	addPropTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Vật Phẩm", theme.ContentAddIcon(), func() {
+		h.showCreateScopedTagDialog(EntityProp, h.propTagCheck)
+	})
+	addPropTagBtn.Importance = widget.LowImportance
+
 	newBtn := widget.NewButtonWithIcon("Làm mới biểu mẫu", theme.DocumentCreateIcon(), func() {
 		h.clearPropForm()
 	})
@@ -636,7 +701,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		if cat == "" {
 			cat = "Cổ vật"
 		}
-		tagIDs := h.resolveSelectedTagIDs(h.propTagCheck.Selected)
+		tagIDs := h.resolveSelectedTagIDsForType(EntityProp, h.propTagCheck.Selected)
 
 		if h.selectedPropID == 0 {
 			created, err := h.store.CreateProp(h.bookID, name, cat, h.propDescEntry.Text, h.propSigEntry.Text)
@@ -682,12 +747,18 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 
 	leftPane := container.NewBorder(
 		container.NewVBox(
-			widget.NewLabelWithStyle("Lọc theo thẻ:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabelWithStyle("Lọc theo Thẻ Vật Phẩm:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			h.propFilterSelect,
 			widget.NewSeparator(),
 		),
 		nil, nil, nil,
 		h.propList,
+	)
+
+	tagSectionHeader := container.NewBorder(
+		nil, nil,
+		widget.NewLabelWithStyle("GẮN THẺ VẬT PHẨM (CHỈ HIỂN THỊ THẺ VẬT PHẨM)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		addPropTagBtn,
 	)
 
 	rightForm := container.NewVScroll(container.NewVBox(
@@ -699,7 +770,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 			widget.NewFormItem("Ý nghĩa cốt truyện", h.propSigEntry),
 		),
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("GẮN THẺ PHÂN LOẠI (TAGS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		tagSectionHeader,
 		h.propTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
@@ -720,7 +791,7 @@ func (h *WorldBuildingHub) clearPropForm() {
 	h.propTagCheck.SetSelected([]string{})
 }
 
-// ==================== TAB 4: SỰ KIỆN (EVENTS TIMELINE) ====================
+// ==================== TAB 4: SỰ KIỆN (EVENTS TIMELINE - THẺ SỰ KIỆN RIÊNG BIỆT) ====================
 
 func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 	h.eventFilterSelect = widget.NewSelect([]string{allTagsFilterLabel}, func(selected string) {
@@ -736,7 +807,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Mốc sự kiện", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
-			sub := widget.NewLabel("#Thẻ")
+			sub := widget.NewLabel("#Thẻ Sự Kiện")
 			sub.Truncation = fyne.TextTruncateEllipsis
 			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
 			return container.NewVBox(title, subRow)
@@ -792,6 +863,11 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		h.eventTagCheck.SetSelected(extractTagNames(ev.Tags))
 	}
 
+	addEventTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Sự Kiện", theme.ContentAddIcon(), func() {
+		h.showCreateScopedTagDialog(EntityEvent, h.eventTagCheck)
+	})
+	addEventTagBtn.Importance = widget.LowImportance
+
 	newBtn := widget.NewButtonWithIcon("Làm mới biểu mẫu", theme.DocumentCreateIcon(), func() {
 		h.clearEventForm()
 	})
@@ -806,7 +882,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		if order <= 0 {
 			order = 1
 		}
-		tagIDs := h.resolveSelectedTagIDs(h.eventTagCheck.Selected)
+		tagIDs := h.resolveSelectedTagIDsForType(EntityEvent, h.eventTagCheck.Selected)
 
 		if h.selectedEventID == 0 {
 			created, err := h.store.CreateEvent(h.bookID, title, order, h.eventDescEntry.Text)
@@ -851,12 +927,18 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 
 	leftPane := container.NewBorder(
 		container.NewVBox(
-			widget.NewLabelWithStyle("Lọc theo thẻ:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabelWithStyle("Lọc theo Thẻ Sự Kiện:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			h.eventFilterSelect,
 			widget.NewSeparator(),
 		),
 		nil, nil, nil,
 		h.eventList,
+	)
+
+	tagSectionHeader := container.NewBorder(
+		nil, nil,
+		widget.NewLabelWithStyle("GẮN THẺ SỰ KIỆN (CHỈ HIỂN THỊ THẺ SỰ KIỆN)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		addEventTagBtn,
 	)
 
 	rightForm := container.NewVScroll(container.NewVBox(
@@ -867,7 +949,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 			widget.NewFormItem("Mô tả diễn biến", h.eventDescEntry),
 		),
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("GẮN THẺ PHÂN LOẠI (TAGS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		tagSectionHeader,
 		h.eventTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
@@ -887,7 +969,7 @@ func (h *WorldBuildingHub) clearEventForm() {
 	h.eventTagCheck.SetSelected([]string{})
 }
 
-// ==================== TAB 5: QUẢN LÝ THẺ TOÀN CỤC & MÀU SẮC THẺ (COLOR-CODED TAG MANAGER) ====================
+// ==================== TAB 5: QUẢN LÝ THẺ THEO DANH MỤC & MÀU SẮC THẺ ====================
 
 func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 	presets := DefaultTagColorPresets()
@@ -900,8 +982,25 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		hexToLabel[strings.ToLower(p.Hex)] = p.Label
 	}
 
+	categoryLabels := AllEntityTypeTagLabels()
+	filterCategoryOpts := append([]string{allCategoriesFilterLabel}, categoryLabels...)
+
+	h.tagManagerFilterSelect = widget.NewSelect(filterCategoryOpts, func(selected string) {
+		if selected == "" {
+			selected = allCategoriesFilterLabel
+		}
+		h.tagManagerCategoryFilter = selected
+		h.refreshFilteredTagsList()
+	})
+	h.tagManagerFilterSelect.SetSelected(allCategoriesFilterLabel)
+
+	h.tagFormCategorySelect = widget.NewSelect(categoryLabels, nil)
+	if len(categoryLabels) > 0 {
+		h.tagFormCategorySelect.SetSelected(EntityTypeTagLabel(EntityCharacter))
+	}
+
 	h.tagFormNameEntry = NewVietEntry()
-	h.tagFormNameEntry.SetPlaceHolder("Nhập tên thẻ (VD: Thiên giới, Khu vực cấm, Cổ vật)...")
+	h.tagFormNameEntry.SetPlaceHolder("Nhập tên thẻ (VD: Hội Hoa Tiêu, Khu vực cấm, Cổ vật)...")
 
 	h.tagFormHexEntry = NewVietEntry()
 	h.tagFormHexEntry.SetPlaceHolder("#3498db")
@@ -914,7 +1013,7 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 	h.tagFormPreviewBg.StrokeColor = parseHexColor(DefaultTagColor)
 	h.tagFormPreviewBg.StrokeWidth = 1.5
 	h.tagFormPreviewBg.CornerRadius = 6
-	h.tagFormPreviewLabel = widget.NewLabelWithStyle("🏷️ #Xem trước thẻ  (#3498db)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	h.tagFormPreviewLabel = widget.NewLabelWithStyle("🏷️ [Thẻ Nhân Vật] #Xem trước thẻ  (#3498db)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	previewBadge := container.NewMax(
 		h.tagFormPreviewBg,
@@ -930,14 +1029,21 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		if tagName == "" {
 			tagName = "Xem trước thẻ"
 		}
+		catLabel := h.tagFormCategorySelect.Selected
+		if catLabel == "" {
+			catLabel = EntityTypeTagLabel(EntityCharacter)
+		}
 		h.tagFormPreviewDot.FillColor = parseHexColor(hex)
 		h.tagFormPreviewDot.Refresh()
 		h.tagFormPreviewBg.FillColor = parseHexTintColor(hex, 42)
 		h.tagFormPreviewBg.StrokeColor = parseHexColor(hex)
 		h.tagFormPreviewBg.Refresh()
-		h.tagFormPreviewLabel.SetText(fmt.Sprintf("🏷️ #%s  (%s)", tagName, hex))
+		h.tagFormPreviewLabel.SetText(fmt.Sprintf("🏷️ [%s] #%s  (%s)", catLabel, tagName, hex))
 	}
 
+	h.tagFormCategorySelect.OnChanged = func(_ string) {
+		updateLiveTagPreview()
+	}
 	h.tagFormNameEntry.SetOnChangedCallback(func(_ string) {
 		updateLiveTagPreview()
 	})
@@ -970,9 +1076,9 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		paletteGrid.Add(container.NewBorder(nil, nil, container.NewCenter(dotBox), nil, colorBtn))
 	}
 
-	// Danh sách Thẻ bên trái với huy hiệu màu sắc (canvas.Circle + canvas.Rectangle)
+	// Danh sách Thẻ bên trái với huy hiệu màu sắc & nhãn Danh mục thẻ
 	h.tagList = widget.NewList(
-		func() int { return len(h.tags) },
+		func() int { return len(h.filteredTags) },
 		func() fyne.CanvasObject {
 			bgRect := canvas.NewRectangle(parseHexTintColor(DefaultTagColor, 32))
 			bgRect.CornerRadius = 6
@@ -980,6 +1086,7 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 			bgRect.StrokeColor = parseHexColor(DefaultTagColor)
 
 			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 16)
+			catLbl := widget.NewLabelWithStyle("[Thẻ Nhân Vật]", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 			nameLbl := widget.NewLabelWithStyle("#Tên thẻ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 			hexLbl := widget.NewLabelWithStyle("#3498db", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 
@@ -989,17 +1096,17 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 			delBtn := widget.NewButtonWithIcon("Xóa thẻ", theme.DeleteIcon(), nil)
 			delBtn.Importance = widget.DangerImportance
 
-			leftInfo := container.NewHBox(container.NewCenter(dotWrap), nameLbl, hexLbl)
+			leftInfo := container.NewHBox(container.NewCenter(dotWrap), catLbl, nameLbl, hexLbl)
 			rightActions := container.NewHBox(editBtn, delBtn)
 			rowContent := container.NewBorder(nil, nil, nil, rightActions, leftInfo)
 
 			return container.NewMax(bgRect, container.NewPadded(rowContent))
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
-			if i < 0 || i >= len(h.tags) {
+			if i < 0 || i >= len(h.filteredTags) {
 				return
 			}
-			tag := h.tags[i]
+			tag := h.filteredTags[i]
 			tagColor := NormalizeHexColor(tag.Color)
 
 			maxBox := obj.(*fyne.Container)
@@ -1017,8 +1124,8 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 				if !ok {
 					continue
 				}
-				if len(hbox.Objects) == 3 {
-					// leftInfo: [center(dotWrap), nameLbl, hexLbl]
+				if len(hbox.Objects) == 4 {
+					// leftInfo: [center(dotWrap), catLbl, nameLbl, hexLbl]
 					if centerWrap, ok := hbox.Objects[0].(*fyne.Container); ok && len(centerWrap.Objects) > 0 {
 						if gridWrap, ok := centerWrap.Objects[0].(*fyne.Container); ok && len(gridWrap.Objects) > 0 {
 							if circle, ok := gridWrap.Objects[0].(*canvas.Circle); ok {
@@ -1027,10 +1134,13 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 							}
 						}
 					}
-					if nameLbl, ok := hbox.Objects[1].(*widget.Label); ok {
+					if catLbl, ok := hbox.Objects[1].(*widget.Label); ok {
+						catLbl.SetText(fmt.Sprintf("[%s]", EntityTypeTagLabel(tag.EntityType)))
+					}
+					if nameLbl, ok := hbox.Objects[2].(*widget.Label); ok {
 						nameLbl.SetText(fmt.Sprintf("#%s", tag.Name))
 					}
-					if hexLbl, ok := hbox.Objects[2].(*widget.Label); ok {
+					if hexLbl, ok := hbox.Objects[3].(*widget.Label); ok {
 						hexLbl.SetText(fmt.Sprintf("(%s)", tagColor))
 					}
 				} else if len(hbox.Objects) == 2 {
@@ -1059,11 +1169,12 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 	)
 
 	h.tagList.OnSelected = func(id widget.ListItemID) {
-		if id < 0 || id >= len(h.tags) {
+		if id < 0 || id >= len(h.filteredTags) {
 			return
 		}
-		t := h.tags[id]
+		t := h.filteredTags[id]
 		h.selectedTagID = t.ID
+		h.tagFormCategorySelect.SetSelected(EntityTypeTagLabel(t.EntityType))
 		h.tagFormNameEntry.SetText(t.Name)
 		h.tagFormHexEntry.SetText(NormalizeHexColor(t.Color))
 		if lbl, ok := hexToLabel[strings.ToLower(NormalizeHexColor(t.Color))]; ok {
@@ -1083,15 +1194,16 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 			return
 		}
 		hexColor := NormalizeHexColor(h.tagFormHexEntry.Text)
+		cat := ParseEntityTypeTagLabel(h.tagFormCategorySelect.Selected)
 		if h.selectedTagID == 0 {
-			created, err := h.store.CreateTag(h.bookID, name, hexColor)
+			created, err := h.store.CreateTagForType(h.bookID, cat, name, hexColor)
 			if err != nil {
 				dialog.ShowError(err, h.parentWin)
 				return
 			}
 			h.selectedTagID = created.ID
 		} else {
-			if err := h.store.UpdateTag(h.selectedTagID, name, hexColor); err != nil {
+			if err := h.store.UpdateTag(h.selectedTagID, name, hexColor, cat); err != nil {
 				dialog.ShowError(err, h.parentWin)
 				return
 			}
@@ -1117,18 +1229,28 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 	})
 	delTagBtn.Importance = widget.DangerImportance
 
-	info := widget.NewLabel("Danh sách các Thẻ phân loại (Tags) kèm Màu sắc thẻ. Nhấp vào một thẻ để chỉnh sửa tên/màu sắc hoặc nhấn 'Chỉnh sửa thẻ'.")
+	info := widget.NewLabel("Mỗi danh mục thực thể (Thẻ Nhân Vật, Thẻ Địa Điểm, Thẻ Vật Phẩm, Thẻ Sự Kiện) có bộ thẻ tách biệt hoàn toàn để tránh lộn xộn.")
 	info.Wrapping = fyne.TextWrapWord
 
 	leftPane := container.NewBorder(
-		container.NewVBox(info, widget.NewSeparator()),
+		container.NewVBox(
+			info,
+			container.NewBorder(
+				nil, nil,
+				widget.NewLabelWithStyle("Lọc theo danh mục thẻ:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				nil,
+				h.tagManagerFilterSelect,
+			),
+			widget.NewSeparator(),
+		),
 		nil, nil, nil,
 		h.tagList,
 	)
 
 	rightForm := container.NewVScroll(container.NewVBox(
-		widget.NewLabelWithStyle("THÊM THẺ MỚI / CHỈNH SỬA THẺ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabelWithStyle("THÊM THẺ MỚI / CHỈNH SỬA THẺ THEO DANH MỤC", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewForm(
+			widget.NewFormItem("Danh mục thẻ", h.tagFormCategorySelect),
 			widget.NewFormItem("Tên thẻ", h.tagFormNameEntry),
 			widget.NewFormItem("Màu sắc thẻ (Gợi ý)", h.tagFormPresetSelect),
 			widget.NewFormItem("Mã màu Hex", h.tagFormHexEntry),
@@ -1159,8 +1281,84 @@ func (h *WorldBuildingHub) clearTagForm() {
 	}
 }
 
-// showEditTagDialog hiển thị hộp thoại chỉnh sửa nhanh tên và màu sắc của một Thẻ.
+// showCreateScopedTagDialog mở hộp thoại tạo nhanh một Thẻ có màu sắc cho đúng Danh mục thực thể (EntityType) đang mở.
+func (h *WorldBuildingHub) showCreateScopedTagDialog(entityType EntityType, targetCheckGroup *widget.CheckGroup) {
+	catLabel := EntityTypeTagLabel(entityType)
+
+	nameEntry := NewVietEntry()
+	nameEntry.SetPlaceHolder(fmt.Sprintf("Nhập tên %s mới...", catLabel))
+
+	hexEntry := NewVietEntry()
+	hexEntry.SetText(DefaultTagColor)
+
+	dotCircle, dotWrap := newColorCircleIndicator(DefaultTagColor, 20)
+
+	presets := DefaultTagColorPresets()
+	presetLabels := make([]string, len(presets))
+	labelToHex := make(map[string]string, len(presets))
+	for i, p := range presets {
+		presetLabels[i] = p.Label
+		labelToHex[p.Label] = p.Hex
+	}
+
+	colorSelect := widget.NewSelect(presetLabels, func(selected string) {
+		if hex, ok := labelToHex[selected]; ok {
+			hexEntry.SetText(hex)
+			dotCircle.FillColor = parseHexColor(hex)
+			dotCircle.Refresh()
+		}
+	})
+	if len(presetLabels) > 0 {
+		colorSelect.SetSelected(presetLabels[0])
+	}
+
+	hexEntry.SetOnChangedCallback(func(val string) {
+		dotCircle.FillColor = parseHexColor(val)
+		dotCircle.Refresh()
+	})
+
+	hexRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, hexEntry)
+
+	dialog.ShowForm("Thêm "+catLabel+" mới", "Tạo thẻ", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Danh mục", widget.NewLabelWithStyle(catLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})),
+		widget.NewFormItem("Tên thẻ", nameEntry),
+		widget.NewFormItem("Chọn màu", colorSelect),
+		widget.NewFormItem("Màu sắc thẻ (Hex)", hexRow),
+	}, func(confirmed bool) {
+		if !confirmed || strings.TrimSpace(nameEntry.Text) == "" {
+			return
+		}
+		created, err := h.store.CreateTagForType(h.bookID, entityType, nameEntry.Text, hexEntry.Text)
+		if err != nil {
+			dialog.ShowError(err, h.parentWin)
+			return
+		}
+		prevSelected := append([]string{}, targetCheckGroup.Selected...)
+		h.reloadAllData()
+		if created != nil {
+			already := false
+			for _, s := range prevSelected {
+				if s == created.Name {
+					already = true
+					break
+				}
+			}
+			if !already {
+				prevSelected = append(prevSelected, created.Name)
+			}
+			targetCheckGroup.SetSelected(prevSelected)
+		}
+		if h.onUpdated != nil {
+			h.onUpdated()
+		}
+	}, h.parentWin)
+}
+
+// showEditTagDialog hiển thị hộp thoại chỉnh sửa nhanh danh mục, tên và màu sắc của một Thẻ.
 func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
+	categorySelect := widget.NewSelect(AllEntityTypeTagLabels(), nil)
+	categorySelect.SetSelected(EntityTypeTagLabel(tag.EntityType))
+
 	nameEntry := NewVietEntry()
 	nameEntry.SetText(tag.Name)
 
@@ -1192,6 +1390,7 @@ func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
 	hexRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, hexEntry)
 
 	dialog.ShowForm("Chỉnh sửa thẻ", "Lưu thay đổi", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Danh mục thẻ", categorySelect),
 		widget.NewFormItem("Tên thẻ", nameEntry),
 		widget.NewFormItem("Chọn màu", colorSelect),
 		widget.NewFormItem("Màu sắc thẻ (Hex)", hexRow),
@@ -1199,7 +1398,8 @@ func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
 		if !confirmed || strings.TrimSpace(nameEntry.Text) == "" {
 			return
 		}
-		if err := h.store.UpdateTag(tag.ID, nameEntry.Text, hexEntry.Text); err != nil {
+		newCat := ParseEntityTypeTagLabel(categorySelect.Selected)
+		if err := h.store.UpdateTag(tag.ID, nameEntry.Text, hexEntry.Text, newCat); err != nil {
 			dialog.ShowError(err, h.parentWin)
 			return
 		}
@@ -1210,51 +1410,98 @@ func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
 	}, h.parentWin)
 }
 
-// ==================== NẠP DỮ LIỆU & ÁP DỤNG BỘ LỌC THẺ ====================
+// ==================== NẠP DỮ LIỆU & ÁP DỤNG BỘ LỌC THẺ THEO DANH MỤC ====================
 
-func (h *WorldBuildingHub) reloadAllData() {
-	tags, _ := h.store.ListTags(h.bookID)
-	h.tags = tags
-
-	tagNames := make([]string, 0, len(tags))
-	filterOpts := []string{allTagsFilterLabel}
+func buildTagOptionsAndFilter(tags []Tag) ([]string, []string) {
+	names := make([]string, 0, len(tags))
+	filterOpts := make([]string, 0, len(tags)+1)
+	filterOpts = append(filterOpts, allTagsFilterLabel)
 	for _, t := range tags {
-		tagNames = append(tagNames, t.Name)
+		names = append(names, t.Name)
 		filterOpts = append(filterOpts, t.Name)
 	}
+	return names, filterOpts
+}
 
-	// Cập nhật danh sách chọn Thẻ trong các biểu mẫu
-	h.charTagCheck.Options = tagNames
-	h.charTagCheck.Refresh()
-	h.locTagCheck.Options = tagNames
-	h.locTagCheck.Refresh()
-	h.propTagCheck.Options = tagNames
-	h.propTagCheck.Refresh()
-	h.eventTagCheck.Options = tagNames
-	h.eventTagCheck.Refresh()
+func updateSelectOptionsSafely(sel *widget.Select, opts []string, currentFilter *string) {
+	if sel == nil {
+		return
+	}
+	sel.Options = opts
+	valid := false
+	for _, opt := range opts {
+		if opt == *currentFilter {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		*currentFilter = allTagsFilterLabel
+	}
+	if sel.Selected != *currentFilter {
+		sel.SetSelected(*currentFilter)
+	} else {
+		sel.Refresh()
+	}
+}
 
-	// Cập nhật các bộ lọc theo Thẻ
-	h.charFilterSelect.Options = filterOpts
-	if h.charFilterSelect.Selected == "" {
-		h.charFilterSelect.SetSelected(allTagsFilterLabel)
+func (h *WorldBuildingHub) reloadAllData() {
+	// Nạp danh sách Thẻ được cô lập riêng cho từng Danh mục thực thể (GetTagsByType)
+	h.charTags, _ = h.store.GetTagsByType(h.bookID, EntityCharacter)
+	h.locTags, _ = h.store.GetTagsByType(h.bookID, EntityLocation)
+	h.propTags, _ = h.store.GetTagsByType(h.bookID, EntityProp)
+	h.eventTags, _ = h.store.GetTagsByType(h.bookID, EntityEvent)
+	h.tags, _ = h.store.ListTags(h.bookID)
+
+	charTagNames, charFilterOpts := buildTagOptionsAndFilter(h.charTags)
+	locTagNames, locFilterOpts := buildTagOptionsAndFilter(h.locTags)
+	propTagNames, propFilterOpts := buildTagOptionsAndFilter(h.propTags)
+	eventTagNames, eventFilterOpts := buildTagOptionsAndFilter(h.eventTags)
+
+	// Cập nhật danh sách chọn Thẻ riêng biệt trong biểu mẫu của từng Tab
+	if h.charTagCheck != nil {
+		h.charTagCheck.Options = charTagNames
+		h.charTagCheck.Refresh()
 	}
-	h.locFilterSelect.Options = filterOpts
-	if h.locFilterSelect.Selected == "" {
-		h.locFilterSelect.SetSelected(allTagsFilterLabel)
+	if h.locTagCheck != nil {
+		h.locTagCheck.Options = locTagNames
+		h.locTagCheck.Refresh()
 	}
-	h.propFilterSelect.Options = filterOpts
-	if h.propFilterSelect.Selected == "" {
-		h.propFilterSelect.SetSelected(allTagsFilterLabel)
+	if h.propTagCheck != nil {
+		h.propTagCheck.Options = propTagNames
+		h.propTagCheck.Refresh()
 	}
-	h.eventFilterSelect.Options = filterOpts
-	if h.eventFilterSelect.Selected == "" {
-		h.eventFilterSelect.SetSelected(allTagsFilterLabel)
+	if h.eventTagCheck != nil {
+		h.eventTagCheck.Options = eventTagNames
+		h.eventTagCheck.Refresh()
 	}
+
+	// Cập nhật bộ lọc theo Thẻ riêng biệt của từng Tab
+	updateSelectOptionsSafely(h.charFilterSelect, charFilterOpts, &h.charTagFilter)
+	updateSelectOptionsSafely(h.locFilterSelect, locFilterOpts, &h.locTagFilter)
+	updateSelectOptionsSafely(h.propFilterSelect, propFilterOpts, &h.propTagFilter)
+	updateSelectOptionsSafely(h.eventFilterSelect, eventFilterOpts, &h.eventTagFilter)
 
 	h.refreshCharactersList()
 	h.refreshLocationsList()
 	h.refreshPropsList()
 	h.refreshEventsList()
+	h.refreshFilteredTagsList()
+}
+
+func (h *WorldBuildingHub) refreshFilteredTagsList() {
+	var out []Tag
+	if h.tagManagerCategoryFilter == "" || h.tagManagerCategoryFilter == allCategoriesFilterLabel {
+		out = append(out, h.tags...)
+	} else {
+		targetCat := ParseEntityTypeTagLabel(h.tagManagerCategoryFilter)
+		for _, t := range h.tags {
+			if t.EntityType == targetCat {
+				out = append(out, t)
+			}
+		}
+	}
+	h.filteredTags = out
 	if h.tagList != nil {
 		h.tagList.Refresh()
 	}
@@ -1316,10 +1563,25 @@ func (h *WorldBuildingHub) refreshEventsList() {
 	}
 }
 
-func (h *WorldBuildingHub) resolveSelectedTagIDs(selectedNames []string) []int64 {
+// resolveSelectedTagIDsForType ánh xạ tên các thẻ được chọn sang ID thẻ thuộc đúng danh mục thực thể (EntityType).
+func (h *WorldBuildingHub) resolveSelectedTagIDsForType(entityType EntityType, selectedNames []string) []int64 {
+	var pool []Tag
+	switch NormalizeEntityType(string(entityType)) {
+	case EntityCharacter:
+		pool = h.charTags
+	case EntityLocation:
+		pool = h.locTags
+	case EntityProp:
+		pool = h.propTags
+	case EntityEvent:
+		pool = h.eventTags
+	default:
+		pool = h.charTags
+	}
+
 	var ids []int64
 	for _, name := range selectedNames {
-		for _, t := range h.tags {
+		for _, t := range pool {
 			if t.Name == name {
 				ids = append(ids, t.ID)
 				break
