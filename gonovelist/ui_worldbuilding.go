@@ -367,24 +367,48 @@ func (c *ColoredTagCheckbox) SetChecked(checked bool) {
 	}
 }
 
+type coloredTagCheckboxRenderer struct {
+	checkbox  *ColoredTagCheckbox
+	bgRect    *canvas.Rectangle
+	checkBg   *canvas.Rectangle
+	checkMark *canvas.Text
+	dot       *canvas.Circle
+	label     *canvas.Text
+	container *fyne.Container
+}
+
 func (c *ColoredTagCheckbox) CreateRenderer() fyne.WidgetRenderer {
+	tagCol := parseHexColor(c.Tag.Color)
+
 	bgRect := canvas.NewRectangle(color.Transparent)
 	bgRect.CornerRadius = 5
 
 	checkBg := canvas.NewRectangle(color.Transparent)
 	checkBg.CornerRadius = 3
 
-	checkMark := canvas.NewText("✓", color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+	checkMark := canvas.NewText("", color.NRGBA{R: 255, G: 255, B: 255, A: 255})
 	checkMark.Alignment = fyne.TextAlignCenter
 	checkMark.TextStyle = fyne.TextStyle{Bold: true}
 	checkMark.TextSize = 11
 
-	dot := canvas.NewCircle(parseHexColor(c.Tag.Color))
+	checkStack := container.NewStack(checkBg, container.NewCenter(checkMark))
+	checkWrap := container.NewGridWrap(fyne.NewSize(18, 18), checkStack)
+
+	dot := canvas.NewCircle(tagCol)
+	dotWrap := container.NewGridWrap(fyne.NewSize(10, 10), dot)
 
 	// Áp dụng trực tiếp mã màu Hex của Thẻ lên nhãn văn bản bằng canvas.Text
-	label := canvas.NewText("# "+c.Tag.Name, parseHexColor(c.Tag.Color))
+	label := canvas.NewText("# "+c.Tag.Name, tagCol)
 	label.TextStyle = fyne.TextStyle{Bold: true}
 	label.TextSize = 13
+
+	row := container.NewHBox(
+		container.NewCenter(checkWrap),
+		container.NewCenter(dotWrap),
+		label,
+	)
+	padded := container.NewPadded(row)
+	root := container.NewMax(bgRect, padded)
 
 	r := &coloredTagCheckboxRenderer{
 		checkbox:  c,
@@ -393,54 +417,25 @@ func (c *ColoredTagCheckbox) CreateRenderer() fyne.WidgetRenderer {
 		checkMark: checkMark,
 		dot:       dot,
 		label:     label,
+		container: root,
 	}
 	r.Refresh()
 	return r
 }
 
-type coloredTagCheckboxRenderer struct {
-	checkbox  *ColoredTagCheckbox
-	bgRect    *canvas.Rectangle
-	checkBg   *canvas.Rectangle
-	checkMark *canvas.Text
-	dot       *canvas.Circle
-	label     *canvas.Text
-}
-
 func (r *coloredTagCheckboxRenderer) Layout(size fyne.Size) {
-	r.bgRect.Move(fyne.NewPos(0, 0))
-	r.bgRect.Resize(size)
-
-	boxY := (size.Height - 16) / 2
-	r.checkBg.Move(fyne.NewPos(6, boxY))
-	r.checkBg.Resize(fyne.NewSize(16, 16))
-
-	markMin := r.checkMark.MinSize()
-	r.checkMark.Move(fyne.NewPos(6+(16-markMin.Width)/2, boxY+(16-markMin.Height)/2))
-	r.checkMark.Resize(markMin)
-
-	dotY := (size.Height - 10) / 2
-	r.dot.Move(fyne.NewPos(28, dotY))
-	r.dot.Resize(fyne.NewSize(10, 10))
-
-	labelMin := r.label.MinSize()
-	labelW := size.Width - 44 - 8
-	if labelW < labelMin.Width {
-		labelW = labelMin.Width
-	}
-	r.label.Move(fyne.NewPos(44, (size.Height-labelMin.Height)/2))
-	r.label.Resize(fyne.NewSize(labelW, labelMin.Height))
+	r.container.Resize(size)
 }
 
 func (r *coloredTagCheckboxRenderer) MinSize() fyne.Size {
-	labelMin := r.label.MinSize()
-	w := float32(44) + labelMin.Width + 14
-	h := labelMin.Height + 10
-	if h < 28 {
-		h = 28
-	}
-	return fyne.NewSize(w, h)
+	return r.container.MinSize()
 }
+
+func (r *coloredTagCheckboxRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{r.container}
+}
+
+func (r *coloredTagCheckboxRenderer) Destroy() {}
 
 func (r *coloredTagCheckboxRenderer) Refresh() {
 	tagCol := parseHexColor(r.checkbox.Tag.Color)
@@ -478,7 +473,7 @@ func (r *coloredTagCheckboxRenderer) Refresh() {
 	r.bgRect.Refresh()
 	r.checkBg.Refresh()
 	r.checkMark.Refresh()
-	r.Layout(r.checkbox.Size())
+	r.container.Refresh()
 }
 
 func (r *coloredTagCheckboxRenderer) Objects() []fyne.CanvasObject {
@@ -685,6 +680,16 @@ type WorldBuildingHub struct {
 	eventDescEntry  *VietnameseEntry
 	eventTagCheck   *ColoredTagCheckGroup
 
+	// Container giao diện bên phải và thanh cuộn của từng Tab thực thể (hỗ trợ Refresh tức thời)
+	charRightForm    *fyne.Container
+	charRightScroll  *container.Scroll
+	locRightForm     *fyne.Container
+	locRightScroll   *container.Scroll
+	propRightForm    *fyne.Container
+	propRightScroll  *container.Scroll
+	eventRightForm   *fyne.Container
+	eventRightScroll *container.Scroll
+
 	// Biểu mẫu Quản lý Thẻ theo danh mục & Lưới ô màu trực quan (Visual Swatch Picker)
 	newTagEntry           *VietnameseEntry
 	quickCategorySelect   *widget.Select
@@ -784,17 +789,55 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 	tabTags := container.NewTabItem("Quản lý Thẻ", h.buildTagManagerTab())
 
 	tabs := container.NewAppTabs(tabChars, tabLocs, tabProps, tabEvents, tabTags)
-	// Tự động đồng bộ Danh mục thẻ trên thanh tạo nhanh khi người dùng chuyển đổi giữa các Tab thực thể
+	// Tự động đồng bộ Danh mục thẻ trên thanh tạo nhanh và làm mới bộ chọn thẻ khi chuyển Tab
 	tabs.OnSelected = func(item *container.TabItem) {
 		switch item {
 		case tabChars:
 			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityCharacter))
+			if h.charTagCheck != nil {
+				h.charTagCheck.Refresh()
+			}
+			if h.charRightForm != nil {
+				h.charRightForm.Refresh()
+			}
+			if h.charRightScroll != nil {
+				h.charRightScroll.Refresh()
+			}
 		case tabLocs:
 			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityLocation))
+			if h.locTagCheck != nil {
+				h.locTagCheck.Refresh()
+			}
+			if h.locRightForm != nil {
+				h.locRightForm.Refresh()
+			}
+			if h.locRightScroll != nil {
+				h.locRightScroll.Refresh()
+			}
 		case tabProps:
 			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityProp))
+			if h.propTagCheck != nil {
+				h.propTagCheck.Refresh()
+			}
+			if h.propRightForm != nil {
+				h.propRightForm.Refresh()
+			}
+			if h.propRightScroll != nil {
+				h.propRightScroll.Refresh()
+			}
 		case tabEvents:
 			h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityEvent))
+			if h.eventTagCheck != nil {
+				h.eventTagCheck.Refresh()
+			}
+			if h.eventRightForm != nil {
+				h.eventRightForm.Refresh()
+			}
+			if h.eventRightScroll != nil {
+				h.eventRightScroll.Refresh()
+			}
+		case tabTags:
+			h.refreshFilteredTagsList()
 		}
 	}
 
@@ -870,6 +913,9 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		h.charRoleEntry.SetText(c.Role)
 		h.charDescEntry.SetText(c.Description)
 		h.charTagCheck.SetSelected(extractTagNames(c.Tags))
+		if h.charRightForm != nil {
+			h.charRightForm.Refresh()
+		}
 	}
 
 	addCharTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Nhân Vật", theme.ContentAddIcon(), func() {
@@ -949,7 +995,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		addCharTagBtn,
 	)
 
-	rightForm := container.NewVScroll(container.NewVBox(
+	h.charRightForm = container.NewVBox(
 		widget.NewLabelWithStyle("THÔNG TIN NHÂN VẬT", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewForm(
 			widget.NewFormItem("Tên nhân vật", h.charNameEntry),
@@ -961,9 +1007,10 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		h.charTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
-	))
+	)
+	h.charRightScroll = container.NewVScroll(h.charRightForm)
 
-	split := container.NewHSplit(leftPane, rightForm)
+	split := container.NewHSplit(leftPane, h.charRightScroll)
 	split.Offset = 0.38
 	return split
 }
@@ -975,6 +1022,9 @@ func (h *WorldBuildingHub) clearCharacterForm() {
 	h.charRoleEntry.SetText("")
 	h.charDescEntry.SetText("")
 	h.charTagCheck.SetSelected([]string{})
+	if h.charRightForm != nil {
+		h.charRightForm.Refresh()
+	}
 }
 
 // ==================== TAB 2: ĐỊA ĐIỂM (LOCATIONS - THẺ ĐỊA ĐIỂM RIÊNG BIỆT) ====================
@@ -1042,6 +1092,9 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		h.locNameEntry.SetText(l.Name)
 		h.locDescEntry.SetText(l.Description)
 		h.locTagCheck.SetSelected(extractTagNames(l.Tags))
+		if h.locRightForm != nil {
+			h.locRightForm.Refresh()
+		}
 	}
 
 	addLocTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Địa Điểm", theme.ContentAddIcon(), func() {
@@ -1116,7 +1169,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		addLocTagBtn,
 	)
 
-	rightForm := container.NewVScroll(container.NewVBox(
+	h.locRightForm = container.NewVBox(
 		widget.NewLabelWithStyle("THÔNG TIN ĐỊA ĐIỂM / BỐI CẢNH", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewForm(
 			widget.NewFormItem("Tên địa điểm", h.locNameEntry),
@@ -1127,9 +1180,10 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		h.locTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
-	))
+	)
+	h.locRightScroll = container.NewVScroll(h.locRightForm)
 
-	split := container.NewHSplit(leftPane, rightForm)
+	split := container.NewHSplit(leftPane, h.locRightScroll)
 	split.Offset = 0.38
 	return split
 }
@@ -1140,6 +1194,9 @@ func (h *WorldBuildingHub) clearLocationForm() {
 	h.locNameEntry.SetText("")
 	h.locDescEntry.SetText("")
 	h.locTagCheck.SetSelected([]string{})
+	if h.locRightForm != nil {
+		h.locRightForm.Refresh()
+	}
 }
 
 // ==================== TAB 3: VẬT PHẨM (PROPS - THẺ VẬT PHẨM RIÊNG BIỆT) ====================
@@ -1216,6 +1273,9 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		h.propDescEntry.SetText(p.Description)
 		h.propSigEntry.SetText(p.Significance)
 		h.propTagCheck.SetSelected(extractTagNames(p.Tags))
+		if h.propRightForm != nil {
+			h.propRightForm.Refresh()
+		}
 	}
 
 	addPropTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Vật Phẩm", theme.ContentAddIcon(), func() {
@@ -1296,7 +1356,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		addPropTagBtn,
 	)
 
-	rightForm := container.NewVScroll(container.NewVBox(
+	h.propRightForm = container.NewVBox(
 		widget.NewLabelWithStyle("THÔNG TIN VẬT PHẨM (PROPS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewForm(
 			widget.NewFormItem("Tên vật phẩm", h.propNameEntry),
@@ -1309,9 +1369,10 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		h.propTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
-	))
+	)
+	h.propRightScroll = container.NewVScroll(h.propRightForm)
 
-	split := container.NewHSplit(leftPane, rightForm)
+	split := container.NewHSplit(leftPane, h.propRightScroll)
 	split.Offset = 0.38
 	return split
 }
@@ -1324,6 +1385,9 @@ func (h *WorldBuildingHub) clearPropForm() {
 	h.propDescEntry.SetText("")
 	h.propSigEntry.SetText("")
 	h.propTagCheck.SetSelected([]string{})
+	if h.propRightForm != nil {
+		h.propRightForm.Refresh()
+	}
 }
 
 // ==================== TAB 4: SỰ KIỆN (EVENTS TIMELINE - THẺ SỰ KIỆN RIÊNG BIỆT) ====================
@@ -1396,6 +1460,9 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		h.eventOrderEntry.SetText(fmt.Sprintf("%d", ev.TimelineOrder))
 		h.eventDescEntry.SetText(ev.Description)
 		h.eventTagCheck.SetSelected(extractTagNames(ev.Tags))
+		if h.eventRightForm != nil {
+			h.eventRightForm.Refresh()
+		}
 	}
 
 	addEventTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Sự Kiện", theme.ContentAddIcon(), func() {
@@ -1476,7 +1543,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		addEventTagBtn,
 	)
 
-	rightForm := container.NewVScroll(container.NewVBox(
+	h.eventRightForm = container.NewVBox(
 		widget.NewLabelWithStyle("THÔNG TIN SỰ KIỆN DÒNG THỜI GIAN", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewForm(
 			widget.NewFormItem("Tiêu đề sự kiện", h.eventTitleEntry),
@@ -1488,9 +1555,10 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		h.eventTagCheck,
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
-	))
+	)
+	h.eventRightScroll = container.NewVScroll(h.eventRightForm)
 
-	split := container.NewHSplit(leftPane, rightForm)
+	split := container.NewHSplit(leftPane, h.eventRightScroll)
 	split.Offset = 0.38
 	return split
 }
@@ -1502,6 +1570,9 @@ func (h *WorldBuildingHub) clearEventForm() {
 	h.eventOrderEntry.SetText(fmt.Sprintf("%d", len(h.filteredEvents)+1))
 	h.eventDescEntry.SetText("")
 	h.eventTagCheck.SetSelected([]string{})
+	if h.eventRightForm != nil {
+		h.eventRightForm.Refresh()
+	}
 }
 
 // ==================== TAB 5: QUẢN LÝ THẺ THEO DANH MỤC & MÀU SẮC THẺ ====================
@@ -2006,6 +2077,52 @@ func (h *WorldBuildingHub) reloadAllData() {
 	h.refreshPropsList()
 	h.refreshEventsList()
 	h.refreshFilteredTagsList()
+
+	// 3. Làm mới toàn bộ container chứa các bộ chọn thẻ để các thẻ lập tức xuất hiện trên giao diện
+	h.refreshTagContainers()
+}
+
+// refreshTagContainers làm mới toàn bộ widget và container chứa các bộ chọn Thẻ trên tất cả các Tab thực thể.
+func (h *WorldBuildingHub) refreshTagContainers() {
+	if h.charTagCheck != nil {
+		h.charTagCheck.Refresh()
+	}
+	if h.charRightForm != nil {
+		h.charRightForm.Refresh()
+	}
+	if h.charRightScroll != nil {
+		h.charRightScroll.Refresh()
+	}
+
+	if h.locTagCheck != nil {
+		h.locTagCheck.Refresh()
+	}
+	if h.locRightForm != nil {
+		h.locRightForm.Refresh()
+	}
+	if h.locRightScroll != nil {
+		h.locRightScroll.Refresh()
+	}
+
+	if h.propTagCheck != nil {
+		h.propTagCheck.Refresh()
+	}
+	if h.propRightForm != nil {
+		h.propRightForm.Refresh()
+	}
+	if h.propRightScroll != nil {
+		h.propRightScroll.Refresh()
+	}
+
+	if h.eventTagCheck != nil {
+		h.eventTagCheck.Refresh()
+	}
+	if h.eventRightForm != nil {
+		h.eventRightForm.Refresh()
+	}
+	if h.eventRightScroll != nil {
+		h.eventRightScroll.Refresh()
+	}
 }
 
 func (h *WorldBuildingHub) refreshFilteredTagsList() {
