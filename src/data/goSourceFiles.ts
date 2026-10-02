@@ -1,4 +1,7 @@
 import mainGoRaw from '../../gonovelist/main.go?raw';
+import themeGoRaw from '../../gonovelist/theme.go?raw';
+import audioGoRaw from '../../gonovelist/audio.go?raw';
+import settingsGoRaw from '../../gonovelist/settings.go?raw';
 import vietInputGoRaw from '../../gonovelist/vietnamese_input.go?raw';
 import modelsGoRaw from '../../gonovelist/models.go?raw';
 import databaseGoRaw from '../../gonovelist/database.go?raw';
@@ -14,6 +17,7 @@ export interface GoSourceFile {
   path: string;
   layer:
     | 'Điểm Khởi Chạy (Entry Point)'
+    | 'Chủ Đề, Âm Thanh & Cài Đặt'
     | 'Bộ Gõ & Phông Chữ Tiếng Việt'
     | 'Tầng Mô Hình (Domain Layer)'
     | 'Tầng Dữ Liệu & Dịch Vụ (SQLite)'
@@ -29,12 +33,15 @@ export const PROJECT_TREE_LAYOUT = `gonovelist/
 ├── go.mod                 # Định nghĩa module Go 1.22+ (fyne.io/fyne/v2 v2.5.3, modernc.org/sqlite)
 ├── schema.sql             # Lược đồ SQLite (projects, acts, chapters, scenes, characters, locations, props, events, tags, entity_tags)
 ├── main.go                # Điểm khởi chạy ứng dụng, tự động nạp phông chữ Tiếng Việt & khởi tạo SQLite
-├── vietnamese_input.go    # Bộ gõ Tiếng Việt Telex / Fcitx5 UTF-8 chuẩn xác & DynamicFontTheme phóng to/thu nhỏ chữ
+├── theme.go               # Hệ thống Đa Chủ đề Fyne (Chế độ Sáng / Chế độ Tối / Giấy cổ điển Sepia) & Thu phóng chữ động
+├── audio.go               # Bộ tổng hợp âm thanh WAV 16-bit PCM (tiếng gõ máy chữ / phím cơ / nhấp nút) & phát bất đồng bộ
+├── settings.go            # Trung tâm Cài đặt hệ thống (Chuyển đổi Chủ đề tức thì, Âm thanh giao diện & Cỡ chữ)
+├── vietnamese_input.go    # Bộ gõ Tiếng Việt Telex / Fcitx5 UTF-8 chuẩn xác & chống nhảy dòng con trỏ
 ├── models.go              # Các struct miền dữ liệu (Project, Act, Chapter, Scene, Character, Location, Prop, Event, Tag)
-├── database.go            # Tầng truy xuất SQLite, миграции tự động, quản lý Thẻ đa hình (entity_tags)
+├── database.go            # Tầng truy xuất SQLite, миграции tự động, quản lý Thẻ phân tách theo danh mục (entity_type)
 ├── export.go              # Hệ thống xuất bản đa định dạng (.txt, .odt, .pdf, .epub, .md, .html) & chọn Phạm vi xuất bản
-├── ui_worldbuilding.go    # Trung tâm Xây dựng Thế giới đa tab (Nhân vật, Địa điểm, Vật phẩm, Sự kiện, Quản lý Thẻ & Lọc theo thẻ)
-├── ui_main.go             # Cửa sổ chính Fyne v2, menu Xuất bản đa định dạng, phím tắt thu phóng chữ & cây phân cấp
+├── ui_worldbuilding.go    # Trung tâm Xây dựng Thế giới đa tab & Hệ thống Thẻ màu sắc cô lập theo danh mục
+├── ui_main.go             # Cửa sổ chính Fyne v2, menu Cài đặt, menu Xuất bản đa định dạng & cây phân cấp
 └── ui_editor.go           # Trình soạn thảo văn xuôi Tiếng Việt, thanh công cụ A-/A+, auto-save 750ms & Ngữ cảnh Cảnh`;
 
 export const BUILD_COMMANDS = `# 1. Tạo thư mục dự án và khởi tạo module Go (Yêu cầu Go 1.22+)
@@ -64,6 +71,30 @@ export const GO_SOURCE_FILES: GoSourceFile[] = [
     summary:
       'Tự động cấu hình phông chữ Unicode Tiếng Việt, khởi tạo ứng dụng Fyne v2 và mở cơ sở dữ liệu SQLite tại ~/.gonovelist/gonovelist.db.',
     code: mainGoRaw,
+  },
+  {
+    filename: 'theme.go',
+    path: 'gonovelist/theme.go',
+    layer: 'Chủ Đề, Âm Thanh & Cài Đặt',
+    summary:
+      'Triển khai fyne.Theme hỗ trợ 3 chủ đề màu sắc (Chế độ Sáng, Chế độ Tối, Giấy cổ điển Sepia) kết hợp thu phóng cỡ chữ động (12px–32px) áp dụng tức thì không cần khởi động lại.',
+    code: themeGoRaw,
+  },
+  {
+    filename: 'audio.go',
+    path: 'gonovelist/audio.go',
+    layer: 'Chủ Đề, Âm Thanh & Cài Đặt',
+    summary:
+      'Bộ tổng hợp âm thanh WAV 16-bit PCM trong bộ nhớ (tiếng gõ máy chữ cổ điển, phím cơ trầm, tiếng nhấp nút) và SoundManager phát âm thanh bất đồng bộ.',
+    code: audioGoRaw,
+  },
+  {
+    filename: 'settings.go',
+    path: 'gonovelist/settings.go',
+    layer: 'Chủ Đề, Âm Thanh & Cài Đặt',
+    summary:
+      'Hộp thoại Cài Đặt Hệ Thống đa tab (Chủ đề Sáng/Tối/Sepia kèm thẻ xem trước màu sắc, điều chỉnh cỡ chữ, bật/tắt Âm thanh giao diện & nghe thử hiệu ứng).',
+    code: settingsGoRaw,
   },
   {
     filename: 'vietnamese_input.go',

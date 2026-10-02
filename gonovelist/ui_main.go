@@ -122,9 +122,12 @@ func NewNovelistUI(app fyne.App, window fyne.Window, store *Store) (*NovelistUI,
 		return nil, fmt.Errorf("không thể tải danh sách tác phẩm: %w", err)
 	}
 
-	// Nạp cỡ chữ ưa thích đã lưu từ Preferences (mặc định 18px chống mỏi mắt)
+	// Nạp cỡ chữ, Chủ đề (Light/Dark/Sepia) và cấu hình Âm thanh giao diện từ Preferences
 	savedFontSize := float32(app.Preferences().FloatWithFallback(PrefKeyEditorFontSize, float64(DefaultEditorFontSize)))
-	fontTheme := NewDynamicFontTheme(savedFontSize)
+	savedThemeMode := ParseThemeModeLabel(app.Preferences().StringWithFallback(PrefKeyThemeMode, string(ThemeModeLight)))
+	GlobalSoundManager.LoadFromPreferences(app.Preferences())
+
+	fontTheme := NewDynamicFontTheme(savedFontSize, savedThemeMode)
 	app.Settings().SetTheme(fontTheme)
 
 	ui := &NovelistUI{
@@ -199,6 +202,10 @@ func (ui *NovelistUI) buildMainMenu() {
 		fyne.NewMenuItem("Xuất bản ra HTML (.html)...", func() {
 			ui.ShowExportDialog(ExportFormatHTML)
 		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Cài đặt...", func() {
+			ui.ShowSettingsDialog()
+		}),
 	)
 
 	hierarchyMenu := fyne.NewMenu("Cấu trúc",
@@ -234,7 +241,37 @@ func (ui *NovelistUI) buildMainMenu() {
 		}),
 	)
 
-	ui.window.SetMainMenu(fyne.NewMainMenu(fileMenu, hierarchyMenu, worldMenu, viewMenu))
+	settingsMenu := fyne.NewMenu("Cài đặt",
+		fyne.NewMenuItem("Mở Cài đặt hệ thống (Chủ đề & Âm thanh)...", func() {
+			ui.ShowSettingsDialog()
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Chủ đề: Chế độ Sáng", func() {
+			PlayUIClickSound()
+			ui.ApplyThemeMode(ThemeModeLight)
+		}),
+		fyne.NewMenuItem("Chủ đề: Chế độ Tối", func() {
+			PlayUIClickSound()
+			ui.ApplyThemeMode(ThemeModeDark)
+		}),
+		fyne.NewMenuItem("Chủ đề: Giấy cổ điển (Sepia)", func() {
+			PlayUIClickSound()
+			ui.ApplyThemeMode(ThemeModeSepia)
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Bật/Tắt Âm thanh giao diện", func() {
+			next := !GlobalSoundManager.IsEnabled()
+			GlobalSoundManager.SetEnabled(next)
+			if ui.app != nil {
+				GlobalSoundManager.SaveToPreferences(ui.app.Preferences())
+			}
+			if next {
+				PlayUIClickSound()
+			}
+		}),
+	)
+
+	ui.window.SetMainMenu(fyne.NewMainMenu(fileMenu, hierarchyMenu, worldMenu, viewMenu, settingsMenu))
 }
 
 func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
@@ -260,48 +297,63 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 
 	// Nút mở Trung tâm Xây dựng Thế giới & Quản lý Thẻ trên thanh công cụ
 	worldHubBtn := widget.NewButtonWithIcon("Quản lý Thế giới & Thẻ", theme.GridIcon(), func() {
+		PlayUIClickSound()
 		ui.openWorldBuildingHub()
 	})
 	worldHubBtn.Importance = widget.HighImportance
 
 	// Nút mở Hộp thoại Xuất Bản Thảo Đa Định Dạng (TXT, ODT, PDF, EPUB, MD, HTML)
 	exportHubBtn := widget.NewButtonWithIcon("Xuất bản thảo...", theme.DocumentSaveIcon(), func() {
+		PlayUIClickSound()
 		ui.ShowExportDialog(ExportFormatPDF)
+	})
+
+	// Nút mở Cài đặt hệ thống (Chủ đề Sáng/Tối/Sepia & Âm thanh giao diện)
+	settingsHubBtn := widget.NewButtonWithIcon("Cài đặt (Chủ đề & Âm thanh)", theme.SettingsIcon(), func() {
+		ui.ShowSettingsDialog()
 	})
 
 	// Công tắc bật/tắt bộ gõ Tiếng Việt Telex nội bộ
 	telexCheck := widget.NewCheck("Bộ gõ Tiếng Việt Telex tích hợp", func(checked bool) {
 		GlobalTelexEnabled = checked
+		PlayUIClickSound()
 	})
 	telexCheck.SetChecked(GlobalTelexEnabled)
 
 	// Thanh công cụ thao tác nhanh cho Hồi / Chương / Cảnh
 	addActBtn := widget.NewButtonWithIcon("Hồi", theme.ContentAddIcon(), func() {
+		PlayUIClickSound()
 		ui.showAddActDialog()
 	})
 	addChapBtn := widget.NewButtonWithIcon("Chương", theme.ContentAddIcon(), func() {
+		PlayUIClickSound()
 		ui.showAddChapterDialog()
 	})
 	addSceneBtn := widget.NewButtonWithIcon("Cảnh", theme.ContentAddIcon(), func() {
+		PlayUIClickSound()
 		ui.showAddSceneDialog()
 	})
 
 	renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
+		PlayUIClickSound()
 		ui.showRenameNodeDialog()
 	})
 	renameBtn.Importance = widget.LowImportance
 
 	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() {
+		PlayUIClickSound()
 		ui.moveSelectedNode(-1)
 	})
 	upBtn.Importance = widget.LowImportance
 
 	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
+		PlayUIClickSound()
 		ui.moveSelectedNode(1)
 	})
 	downBtn.Importance = widget.LowImportance
 
 	deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+		PlayUIClickSound()
 		ui.confirmDeleteNode()
 	})
 	deleteBtn.Importance = widget.DangerImportance
@@ -370,6 +422,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 	)
 
 	ui.tree.OnSelected = func(uid widget.TreeNodeID) {
+		PlayUIClickSound()
 		ui.selectedUID = uid
 		node, ok := ui.nodeMeta[uid]
 		if !ok {
@@ -387,6 +440,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 		ui.projectSelect,
 		worldHubBtn,
 		exportHubBtn,
+		settingsHubBtn,
 		telexCheck,
 		widget.NewSeparator(),
 		container.NewGridWithColumns(3, addActBtn, addChapBtn, addSceneBtn),

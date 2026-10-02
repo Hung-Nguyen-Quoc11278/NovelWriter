@@ -1,7 +1,6 @@
 package main
 
 import (
-	"image/color"
 	"os"
 	"runtime"
 	"strings"
@@ -12,102 +11,8 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
-
-const (
-	DefaultEditorFontSize float32 = 18.0
-	MinEditorFontSize     float32 = 12.0
-	MaxEditorFontSize     float32 = 32.0
-	EditorFontSizeStep    float32 = 2.0
-	PrefKeyEditorFontSize string  = "gonovelist.editor.font_size"
-)
-
-// DynamicFontTheme kế thừa fyne.Theme mặc định và cho phép phóng to / thu nhỏ cỡ chữ (Zoom)
-// linh hoạt theo thời gian thực để chống mỏi mắt khi sáng tác tiểu thuyết dài.
-type DynamicFontTheme struct {
-	mu       sync.RWMutex
-	base     fyne.Theme
-	textSize float32
-}
-
-// NewDynamicFontTheme khởi tạo chủ đề tùy chỉnh với cỡ chữ văn bản mong muốn (mặc định 18px).
-func NewDynamicFontTheme(initialSize float32) *DynamicFontTheme {
-	return &DynamicFontTheme{
-		base:     theme.DefaultTheme(),
-		textSize: clampFontSize(initialSize),
-	}
-}
-
-func clampFontSize(sz float32) float32 {
-	if sz < MinEditorFontSize {
-		return MinEditorFontSize
-	}
-	if sz > MaxEditorFontSize {
-		return MaxEditorFontSize
-	}
-	return sz
-}
-
-// TextSize trả về cỡ chữ hiện tại đang áp dụng.
-func (t *DynamicFontTheme) TextSize() float32 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.textSize
-}
-
-// SetTextSize cập nhật cỡ chữ mới trong giới hạn an toàn [12px..32px].
-func (t *DynamicFontTheme) SetTextSize(sz float32) float32 {
-	clamped := clampFontSize(sz)
-	t.mu.Lock()
-	t.textSize = clamped
-	t.mu.Unlock()
-	return clamped
-}
-
-// ZoomPercent trả về tỷ lệ phần trăm thu phóng so với cỡ chữ gốc 14px của Fyne.
-func (t *DynamicFontTheme) ZoomPercent() int {
-	return int((t.TextSize()/14.0)*100.0 + 0.5)
-}
-
-func (t *DynamicFontTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
-	return t.base.Color(name, variant)
-}
-
-func (t *DynamicFontTheme) Font(style fyne.TextStyle) fyne.Resource {
-	return t.base.Font(style)
-}
-
-func (t *DynamicFontTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
-	return t.base.Icon(name)
-}
-
-// Size ghi đè kích thước chữ (SizeNameText, SubHeading, Heading, LineSpacing) theo tỷ lệ thu phóng động.
-func (t *DynamicFontTheme) Size(name fyne.ThemeSizeName) float32 {
-	t.mu.RLock()
-	sz := t.textSize
-	t.mu.RUnlock()
-
-	switch name {
-	case theme.SizeNameText:
-		return sz
-	case theme.SizeNameSubHeadingText:
-		return sz * 1.18
-	case theme.SizeNameHeadingText:
-		return sz * 1.42
-	case theme.SizeNameCaptionText:
-		if sz*0.82 < 12 {
-			return 12
-		}
-		return sz * 0.82
-	case theme.SizeNameLineSpacing:
-		// Tăng khoảng cách dòng tỷ lệ thuận với cỡ chữ để hiển thị dấu Tiếng Việt rõ ràng, không dính dòng
-		return t.base.Size(name) * (sz / 14.0)
-	default:
-		return t.base.Size(name)
-	}
-}
 
 // GlobalTelexEnabled mặc định TẮT (false) để nhường quyền hoàn toàn cho bộ gõ hệ thống (Fcitx5 / IBus / Unikey),
 // tránh xung đột 2 bộ gõ cùng lúc gây lỗi biến dạng chữ ("lại phải" -> "lẫi phi", "phaỉ").
@@ -433,6 +338,7 @@ func (e *VietnameseEntry) TypedKey(ev *fyne.KeyEvent) {
 	e.mu.Unlock()
 
 	e.Entry.TypedKey(ev)
+	PlayTypingSound(0, ev)
 
 	e.mu.Lock()
 	if (ev.Name == fyne.KeyReturn || ev.Name == fyne.KeyEnter) && e.MultiLine {
@@ -460,6 +366,7 @@ func (e *VietnameseEntry) TypedRune(r rune) {
 	if !utf8.ValidRune(r) {
 		return
 	}
+	PlayTypingSound(r, nil)
 
 	e.mu.Lock()
 	e.lastTypedAt = time.Now()
