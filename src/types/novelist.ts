@@ -31,6 +31,7 @@ export interface Tag {
   bookId: number;
   name: string;
   color?: string;
+  entityType?: 'character' | 'location' | 'prop' | 'event' | string;
 }
 
 export interface Character {

@@ -74,6 +74,16 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
   const [newEventTags, setNewEventTags] = useState<number[]>([]);
 
   const tags: Tag[] = project.tags || [];
+  const charTags: Tag[] = tags.filter((t) => !t.entityType || t.entityType === 'character');
+  const locTags: Tag[] = tags.filter((t) => t.entityType === 'location');
+  const propTags: Tag[] = tags.filter((t) => t.entityType === 'prop');
+  const eventTags: Tag[] = tags.filter((t) => t.entityType === 'event');
+
+  // Danh sách tên thẻ theo từng danh mục (category-specific tag names)
+  const charTagNames: string[] = charTags.map((t) => t.name);
+  const locTagNames: string[] = locTags.map((t) => t.name);
+  const propTagNames: string[] = propTags.map((t) => t.name);
+  const eventTagNames: string[] = eventTags.map((t) => t.name);
   const propsList: Prop[] = project.props || [];
   const eventsList: WorldEvent[] = [...(project.events || [])].sort(
     (a, b) => a.timelineOrder - b.timelineOrder
@@ -340,13 +350,17 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
               />
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ:</span>
-                  {tags.map((t) =>
-                    renderTagButton(
-                      t,
-                      newCharTags.includes(t.id),
-                      () => setNewCharTags((prev) => toggleTagId(prev, t.id)),
-                      'sm'
+                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ nhân vật ({charTagNames.length}):</span>
+                  {charTags.length === 0 ? (
+                    <span className="text-xs italic text-[#78716C]">(Chưa có thẻ nhân vật nào)</span>
+                  ) : (
+                    charTags.map((t) =>
+                      renderTagButton(
+                        t,
+                        newCharTags.includes(t.id),
+                        () => setNewCharTags((prev) => toggleTagId(prev, t.id)),
+                        'sm'
+                      )
                     )
                   )}
                 </div>
@@ -413,8 +427,8 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
 
                     {/* Gắn/bỏ gắn thẻ trực tiếp */}
                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                      <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                      {tags.map((t) =>
+                      <span className="text-[11px] text-[#78716C] mr-1">Thẻ ({charTagNames.length}):</span>
+                      {charTags.map((t) =>
                         renderTagButton(
                           t,
                           charTagIds.includes(t.id),
@@ -480,13 +494,17 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
               />
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ:</span>
-                  {tags.map((t) =>
-                    renderTagButton(
-                      t,
-                      newLocTags.includes(t.id),
-                      () => setNewLocTags((prev) => toggleTagId(prev, t.id)),
-                      'sm'
+                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ địa điểm ({locTagNames.length}):</span>
+                  {locTags.length === 0 ? (
+                    <span className="text-xs italic text-[#78716C]">(Chưa có thẻ địa điểm nào)</span>
+                  ) : (
+                    locTags.map((t) =>
+                      renderTagButton(
+                        t,
+                        newLocTags.includes(t.id),
+                        () => setNewLocTags((prev) => toggleTagId(prev, t.id)),
+                        'sm'
+                      )
                     )
                   )}
                 </div>
@@ -535,8 +553,8 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                       className="w-full text-sm text-[#57534E] bg-transparent border border-transparent focus:border-[#D6D0C4] p-1.5 focus:outline-none resize-none"
                     />
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                      {tags.map((t) =>
+                      <span className="text-[11px] text-[#78716C] mr-1">Thẻ ({locTagNames.length}):</span>
+                      {locTags.map((t) =>
                         renderTagButton(
                           t,
                           locTagIds.includes(t.id),
@@ -603,13 +621,17 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ:</span>
-                  {tags.map((t) =>
-                    renderTagButton(
-                      t,
-                      newPropTags.includes(t.id),
-                      () => setNewPropTags((prev) => toggleTagId(prev, t.id)),
-                      'sm'
+                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ vật phẩm ({propTagNames.length}):</span>
+                  {propTags.length === 0 ? (
+                    <span className="text-xs italic text-[#78716C]">(Chưa có thẻ vật phẩm nào)</span>
+                  ) : (
+                    propTags.map((t) =>
+                      renderTagButton(
+                        t,
+                        newPropTags.includes(t.id),
+                        () => setNewPropTags((prev) => toggleTagId(prev, t.id)),
+                        'sm'
+                      )
                     )
                   )}
                 </div>
@@ -661,8 +683,8 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                     )}
                     {onUpdateProp && (
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                        {tags.map((t) =>
+                        <span className="text-[11px] text-[#78716C] mr-1">Thẻ ({propTagNames.length}):</span>
+                        {propTags.map((t) =>
                           renderTagButton(
                             t,
                             propTagIds.includes(t.id),
@@ -722,26 +744,20 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
               />
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ:</span>
-                  {tags.map((t) => {
-                    const active = newEventTags.includes(t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() =>
-                          setNewEventTags((prev) => toggleTagId(prev, t.id))
-                        }
-                        className={`px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
-                          active
-                            ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                            : 'bg-[#FAF7F2] text-[#57534E] border-[#D6D0C4]'
-                        }`}
-                      >
-                        #{t.name}
-                      </button>
-                    );
-                  })}
+                  <span className="text-xs text-[#57534E] font-medium">Gắn thẻ sự kiện ({eventTagNames.length}):</span>
+                  {eventTags.length === 0 ? (
+                    <span className="text-xs italic text-[#78716C]">(Chưa có thẻ sự kiện nào)</span>
+                  ) : (
+                    eventTags.map((t) => {
+                      const active = newEventTags.includes(t.id);
+                      return renderTagButton(
+                        t,
+                        active,
+                        () => setNewEventTags((prev) => toggleTagId(prev, t.id)),
+                        'sm'
+                      );
+                    })
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -786,8 +802,8 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                     <p className="text-sm text-[#57534E]">{ev.description}</p>
                     {onUpdateEvent && (
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                        {tags.map((t) =>
+                        <span className="text-[11px] text-[#78716C] mr-1">Thẻ ({eventTagNames.length}):</span>
+                        {eventTags.map((t) =>
                           renderTagButton(
                             t,
                             evTagIds.includes(t.id),

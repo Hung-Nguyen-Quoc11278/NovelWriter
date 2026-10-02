@@ -488,10 +488,12 @@ func (r *coloredTagCheckboxRenderer) Objects() []fyne.CanvasObject {
 func (r *coloredTagCheckboxRenderer) Destroy() {}
 
 // ColoredTagCheckGroup quản lý danh sách các ô chọn Thẻ có màu sắc động,
-// cung cấp API tương thích với CheckGroup (Selected, SetSelected, SetTags).
+// cung cấp API tương thích với CheckGroup (Options, Selected, SetOptions, SetSelected, SetTags).
 type ColoredTagCheckGroup struct {
 	*fyne.Container
+	Options   []string
 	tags      []Tag
+	tagMap    map[string]Tag
 	items     []*ColoredTagCheckbox
 	Selected  []string
 	OnChanged func(selected []string)
@@ -501,16 +503,32 @@ type ColoredTagCheckGroup struct {
 func NewColoredTagCheckGroup(onChanged func(selected []string)) *ColoredTagCheckGroup {
 	g := &ColoredTagCheckGroup{
 		OnChanged: onChanged,
+		tagMap:    make(map[string]Tag),
 	}
 	emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút '+ Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 	g.Container = container.NewVBox(emptyLbl)
 	return g
 }
 
+// SetOptions thiết lập danh sách tên thẻ theo danh mục (category-specific tag names) kèm danh sách Thẻ,
+// đảm bảo chỉ các thẻ thuộc danh mục này được hiển thị và màu sắc được kế thừa chính xác.
+func (g *ColoredTagCheckGroup) SetOptions(options []string, tags []Tag) {
+	g.Options = append([]string{}, options...)
+	g.tags = tags
+	g.tagMap = make(map[string]Tag, len(tags))
+	for _, t := range tags {
+		g.tagMap[t.Name] = t
+	}
+	g.rebuild()
+}
+
 // SetTags cập nhật danh sách Thẻ trong nhóm và tự động xây dựng lại các ô chọn có màu tương ứng.
 func (g *ColoredTagCheckGroup) SetTags(tags []Tag) {
-	g.tags = tags
-	g.rebuild()
+	names := make([]string, len(tags))
+	for i, t := range tags {
+		names[i] = t.Name
+	}
+	g.SetOptions(names, tags)
 }
 
 // SetSelected chọn các thẻ theo danh sách tên truyền vào.
@@ -529,7 +547,7 @@ func (g *ColoredTagCheckGroup) rebuild() {
 	g.items = nil
 	g.Container.Objects = nil
 
-	if len(g.tags) == 0 {
+	if len(g.Options) == 0 {
 		emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút '+ Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 		g.Container.Add(emptyLbl)
 		g.Container.Refresh()
@@ -541,11 +559,15 @@ func (g *ColoredTagCheckGroup) rebuild() {
 		selectedMap[s] = true
 	}
 
-	for _, t := range g.tags {
-		tag := t
-		isChecked := selectedMap[tag.Name]
+	for _, name := range g.Options {
+		tagName := name
+		tag, exists := g.tagMap[tagName]
+		if !exists {
+			tag = Tag{Name: tagName, Color: DefaultTagColor}
+		}
+		isChecked := selectedMap[tagName]
 		chk := NewColoredTagCheckbox(tag, isChecked, func(checked bool) {
-			g.updateSelection(tag.Name, checked)
+			g.updateSelection(tagName, checked)
 		})
 		g.items = append(g.items, chk)
 		g.Container.Add(chk)
@@ -594,12 +616,16 @@ type WorldBuildingHub struct {
 	onUpdated func()
 
 	// Danh sách Thẻ được cô lập riêng biệt theo từng loại thực thể (EntityType)
-	charTags     []Tag
-	locTags      []Tag
-	propTags     []Tag
-	eventTags    []Tag
-	tags         []Tag
-	filteredTags []Tag
+	charTags      []Tag
+	locTags       []Tag
+	propTags      []Tag
+	eventTags     []Tag
+	tags          []Tag
+	filteredTags  []Tag
+	charTagNames  []string
+	locTagNames   []string
+	propTagNames  []string
+	eventTagNames []string
 
 	// Dữ liệu đã lọc cho từng Tab
 	filteredChars  []Character
@@ -1936,30 +1962,37 @@ func updateSelectOptionsSafely(sel *widget.Select, opts []string, currentFilter 
 }
 
 func (h *WorldBuildingHub) reloadAllData() {
-	// Nạp danh sách Thẻ được cô lập riêng cho từng Danh mục thực thể (GetTagsByType)
+	// 1. Nạp danh sách Thẻ được cô lập riêng cho từng Danh mục thực thể (GetTagsByType) từ SQLite
 	h.charTags, _ = h.store.GetTagsByType(h.bookID, EntityCharacter)
 	h.locTags, _ = h.store.GetTagsByType(h.bookID, EntityLocation)
 	h.propTags, _ = h.store.GetTagsByType(h.bookID, EntityProp)
 	h.eventTags, _ = h.store.GetTagsByType(h.bookID, EntityEvent)
 	h.tags, _ = h.store.ListTags(h.bookID)
 
+	// Lấy danh sách tên thẻ phân tách theo từng danh mục
 	charTagNames, charFilterOpts := buildTagOptionsAndFilter(h.charTags)
 	locTagNames, locFilterOpts := buildTagOptionsAndFilter(h.locTags)
 	propTagNames, propFilterOpts := buildTagOptionsAndFilter(h.propTags)
 	eventTagNames, eventFilterOpts := buildTagOptionsAndFilter(h.eventTags)
 
-	// Cập nhật danh sách chọn Thẻ riêng biệt trong biểu mẫu của từng Tab với nhãn màu Hex động
+	// Lưu trữ trên struct để sẵn sàng truy xuất
+	h.charTagNames = charTagNames
+	h.locTagNames = locTagNames
+	h.propTagNames = propTagNames
+	h.eventTagNames = eventTagNames
+
+	// 2. Gán trực tiếp các biến danh sách tên thẻ theo danh mục vào các nhóm checkbox UI tương ứng
 	if h.charTagCheck != nil {
-		h.charTagCheck.SetTags(h.charTags)
+		h.charTagCheck.SetOptions(charTagNames, h.charTags)
 	}
 	if h.locTagCheck != nil {
-		h.locTagCheck.SetTags(h.locTags)
+		h.locTagCheck.SetOptions(locTagNames, h.locTags)
 	}
 	if h.propTagCheck != nil {
-		h.propTagCheck.SetTags(h.propTags)
+		h.propTagCheck.SetOptions(propTagNames, h.propTags)
 	}
 	if h.eventTagCheck != nil {
-		h.eventTagCheck.SetTags(h.eventTags)
+		h.eventTagCheck.SetOptions(eventTagNames, h.eventTags)
 	}
 
 	// Cập nhật bộ lọc theo Thẻ riêng biệt của từng Tab
