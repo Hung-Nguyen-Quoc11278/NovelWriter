@@ -937,7 +937,7 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
                   type="button"
                   onClick={async () => {
                     await navigator.clipboard.writeText(
-                      `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4 [Voice: ${selectedVoiceId}]`
+                      `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?trustedclienttoken=6A5AA1D4EAFF4E9fb37e23d68491d6f4 [Voice: ${selectedVoiceId}]`
                     );
                     setCopied(true);
                     setTimeout(() => setCopied(false), 2000);
@@ -948,7 +948,7 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
                 </button>
               </div>
               <div className="font-mono-code text-[11px] text-[#93C5FD] bg-black/40 p-2.5 rounded-xs space-y-1">
-                <div>• Endpoint: <span className="text-[#A7F3D0]">wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1</span></div>
+                <div>• Endpoint: <span className="text-[#A7F3D0]">wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?trustedclienttoken=6A5AA1D4EAFF4E9fb37e23d68491d6f4</span></div>
                 <div>• Voice: <span className="text-[#FDE047]">{selectedVoiceId}</span> | Format: <span className="text-[#F472B6]">audio-24khz-48kbitrate-mono-mp3</span></div>
                 <div className="text-[#9CA3AF] text-[10px]">Độc lập 100% bằng Go tiêu chuẩn (RFC 6455 + SSML) — Không cần Python, không cần pip install.</div>
               </div>

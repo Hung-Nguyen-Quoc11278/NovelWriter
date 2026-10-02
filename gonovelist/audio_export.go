@@ -1,17 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/rand"
-	"crypto/tls"
-	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,6 +22,7 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/gorilla/websocket"
 )
 
 // VietnameseVoicePreset định nghĩa thông số một mẫu giọng đọc Neural Tiếng Việt trong Edge-TTS.
@@ -148,123 +145,11 @@ func CleanProseForSpeech(raw string) string {
 // ==================== PURE GO EDGE-TTS WEBSOCKET CLIENT ====================
 
 const (
-	edgeTTSHost      = "speech.platform.bing.com"
-	edgeTTSPort      = "443"
-	edgeTTSToken     = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
-	edgeTTSUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
-	edgeTTSOrigin    = "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold"
-
-	// Các mã Opcode WebSocket chuẩn theo RFC 6455
-	wsOpcodeContinuation byte = 0x0
-	wsOpcodeText         byte = 0x1
-	wsOpcodeBinary       byte = 0x2
-	wsOpcodeClose        byte = 0x8
-	wsOpcodePing         byte = 0x9
-	wsOpcodePong         byte = 0xA
+	edgeTTSEndpoint  = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
+	edgeTTSToken     = "6A5AA1D4EAFF4E9fb37e23d68491d6f4"
+	edgeTTSOrigin    = "chrome-extension://jdiccldimpdaikepblhedgeebipchbnp"
+	edgeTTSUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
 )
-
-func writeWSFrame(conn net.Conn, opcode byte, payload []byte) error {
-	var header []byte
-	b0 := byte(0x80) | (opcode & 0x0F) // FIN = 1
-	n := len(payload)
-	if n <= 125 {
-		header = []byte{b0, 0x80 | byte(n)}
-	} else if n <= 65535 {
-		header = make([]byte, 4)
-		header[0] = b0
-		header[1] = 0x80 | 126
-		binary.BigEndian.PutUint16(header[2:4], uint16(n))
-	} else {
-		header = make([]byte, 10)
-		header[0] = b0
-		header[1] = 0x80 | 127
-		binary.BigEndian.PutUint64(header[2:10], uint64(n))
-	}
-
-	var mask [4]byte
-	if _, err := rand.Read(mask[:]); err != nil {
-		return fmt.Errorf("lỗi sinh khóa ngẫu nhiên che dữ liệu WebSocket: %w", err)
-	}
-	header = append(header, mask[:]...)
-
-	maskedPayload := make([]byte, n)
-	for i := 0; i < n; i++ {
-		maskedPayload[i] = payload[i] ^ mask[i%4]
-	}
-
-	if _, err := conn.Write(header); err != nil {
-		return err
-	}
-	if n > 0 {
-		_, err := conn.Write(maskedPayload)
-		return err
-	}
-	return nil
-}
-
-func readWSFrame(reader *bufio.Reader) (byte, []byte, error) {
-	b0, err := reader.ReadByte()
-	if err != nil {
-		return 0, nil, err
-	}
-	opcode := b0 & 0x0F
-
-	b1, err := reader.ReadByte()
-	if err != nil {
-		return 0, nil, err
-	}
-	isMasked := (b1 & 0x80) != 0
-	len7 := int(b1 & 0x7F)
-
-	var payloadLen uint64
-	if len7 <= 125 {
-		payloadLen = uint64(len7)
-	} else if len7 == 126 {
-		var l uint16
-		if err := binary.Read(reader, binary.BigEndian, &l); err != nil {
-			return 0, nil, err
-		}
-		payloadLen = uint64(l)
-	} else if len7 == 127 {
-		var l uint64
-		if err := binary.Read(reader, binary.BigEndian, &l); err != nil {
-			return 0, nil, err
-		}
-		payloadLen = l
-	}
-
-	// Giới hạn an toàn chống tràn bộ nhớ với gói tin lỗi
-	if payloadLen > 10*1024*1024 {
-		return 0, nil, fmt.Errorf("kích thước khung dữ liệu WebSocket vượt quá 10MB: %d bytes", payloadLen)
-	}
-
-	var mask [4]byte
-	if isMasked {
-		if _, err := io.ReadFull(reader, mask[:]); err != nil {
-			return 0, nil, err
-		}
-	}
-
-	payload := make([]byte, payloadLen)
-	if payloadLen > 0 {
-		if _, err := io.ReadFull(reader, payload); err != nil {
-			return 0, nil, err
-		}
-		if isMasked {
-			for i := 0; i < int(payloadLen); i++ {
-				payload[i] ^= mask[i%4]
-			}
-		}
-	}
-
-	return opcode, payload, nil
-}
-
-func sendWSClose(conn net.Conn) error {
-	// Gửi mã đóng 1000 (Normal Closure)
-	payload := []byte{0x03, 0xE8}
-	return writeWSFrame(conn, wsOpcodeClose, payload)
-}
 
 func xmlEscape(s string) string {
 	var buf strings.Builder
@@ -381,6 +266,7 @@ func splitParagraphIntoSentences(p string) []string {
 }
 
 // SynthesizeSpeechChunk gửi một phân đoạn văn bản qua WebSocket Edge-TTS và trả về mảng byte MP3 hoàn chỉnh.
+// Sử dụng gorilla/websocket với tiêu đề giả lập trình duyệt Edge chính thức để vượt qua cơ chế chặn HTTP 403 Forbidden.
 func SynthesizeSpeechChunk(voiceID, chunkText string) ([]byte, error) {
 	if strings.TrimSpace(chunkText) == "" {
 		return nil, nil
@@ -390,57 +276,28 @@ func SynthesizeSpeechChunk(voiceID, chunkText string) ([]byte, error) {
 	}
 
 	connID := randomHex(16)
-	reqPath := fmt.Sprintf("/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=%s&ConnectionId=%s", edgeTTSToken, connID)
+	wsURL := fmt.Sprintf("%s?trustedclienttoken=%s&ConnectionId=%s", edgeTTSEndpoint, edgeTTSToken, connID)
 
-	dialer := &net.Dialer{
-		Timeout: 15 * time.Second,
-	}
-	tlsConfig := &tls.Config{
-		ServerName: edgeTTSHost,
-	}
+	// Thiết lập các tiêu đề HTTP bắt buộc theo chuẩn tiện ích mở rộng Microsoft Edge
+	reqHeader := http.Header{}
+	reqHeader.Set("Origin", edgeTTSOrigin)
+	reqHeader.Set("User-Agent", edgeTTSUserAgent)
+	reqHeader.Set("Accept-Encoding", "gzip, deflate, br")
+	reqHeader.Set("Accept-Language", "en-US,en;q=0.9")
+	reqHeader.Set("Pragma", "no-cache")
+	reqHeader.Set("Cache-Control", "no-cache")
 
-	rawConn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(edgeTTSHost, edgeTTSPort), tlsConfig)
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 15 * time.Second
+
+	conn, resp, err := dialer.Dial(wsURL, reqHeader)
 	if err != nil {
-		return nil, fmt.Errorf("lỗi kết nối mạng: không thể thiết lập kết nối an toàn TLS tới máy chủ Edge-TTS: %w", err)
+		if resp != nil {
+			return nil, fmt.Errorf("máy chủ Edge-TTS từ chối kết nối WebSocket (Mã lỗi HTTP %d %s)", resp.StatusCode, resp.Status)
+		}
+		return nil, fmt.Errorf("lỗi kết nối mạng: không thể thiết lập kết nối an toàn WebSocket tới Edge-TTS (%w)", err)
 	}
-	defer rawConn.Close()
-
-	keyBytes := make([]byte, 16)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return nil, fmt.Errorf("lỗi sinh khóa ngẫu nhiên Sec-WebSocket-Key: %w", err)
-	}
-	secKey := base64.StdEncoding.EncodeToString(keyBytes)
-
-	reqStr := fmt.Sprintf(
-		"GET %s HTTP/1.1\r\n"+
-			"Host: %s\r\n"+
-			"Upgrade: websocket\r\n"+
-			"Connection: Upgrade\r\n"+
-			"Sec-WebSocket-Key: %s\r\n"+
-			"Sec-WebSocket-Version: 13\r\n"+
-			"Origin: %s\r\n"+
-			"Pragma: no-cache\r\n"+
-			"Cache-Control: no-cache\r\n"+
-			"User-Agent: %s\r\n"+
-			"Accept-Encoding: gzip, deflate, br, zstd\r\n"+
-			"Accept-Language: vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7\r\n\r\n",
-		reqPath, edgeTTSHost, secKey, edgeTTSOrigin, edgeTTSUserAgent,
-	)
-
-	_ = rawConn.SetDeadline(time.Now().Add(15 * time.Second))
-	if _, err := rawConn.Write([]byte(reqStr)); err != nil {
-		return nil, fmt.Errorf("lỗi gửi bản tin bắt tay WebSocket: %w", err)
-	}
-
-	reader := bufio.NewReader(rawConn)
-	u, _ := url.Parse(reqPath)
-	resp, err := http.ReadResponse(reader, &http.Request{Method: "GET", URL: u})
-	if err != nil {
-		return nil, fmt.Errorf("lỗi đọc phản hồi bắt tay từ máy chủ giọng đọc Edge-TTS: %w", err)
-	}
-	if resp.StatusCode != http.StatusSwitchingProtocols {
-		return nil, fmt.Errorf("máy chủ Edge-TTS từ chối kết nối WebSocket (Mã lỗi HTTP %d %s)", resp.StatusCode, resp.Status)
-	}
+	defer conn.Close()
 
 	// 1. Gửi cấu hình giọng đọc (speech.config)
 	configMsg := fmt.Sprintf(
@@ -450,7 +307,7 @@ func SynthesizeSpeechChunk(voiceID, chunkText string) ([]byte, error) {
 			`{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`,
 		edgeTimestamp(),
 	)
-	if err := writeWSFrame(rawConn, wsOpcodeText, []byte(configMsg)); err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(configMsg)); err != nil {
 		return nil, fmt.Errorf("lỗi gửi bản tin cấu hình giọng đọc Edge-TTS: %w", err)
 	}
 
@@ -474,16 +331,19 @@ func SynthesizeSpeechChunk(voiceID, chunkText string) ([]byte, error) {
 		edgeTimestamp(),
 		ssmlPayload,
 	)
-	if err := writeWSFrame(rawConn, wsOpcodeText, []byte(ssmlMsg)); err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(ssmlMsg)); err != nil {
 		return nil, fmt.Errorf("lỗi gửi bản tin SSML tới máy chủ giọng đọc: %w", err)
 	}
 
 	// 3. Lắng nghe và trích xuất các gói dữ liệu MP3 nhị phân
 	var audioBuf bytes.Buffer
 	for {
-		_ = rawConn.SetReadDeadline(time.Now().Add(40 * time.Second))
-		opcode, payload, err := readWSFrame(reader)
+		_ = conn.SetReadDeadline(time.Now().Add(40 * time.Second))
+		msgType, payload, err := conn.ReadMessage()
 		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				break
+			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				return nil, fmt.Errorf("quá thời gian chờ phản hồi từ máy chủ giọng đọc Edge-TTS (Timeout)")
 			}
@@ -493,15 +353,15 @@ func SynthesizeSpeechChunk(voiceID, chunkText string) ([]byte, error) {
 			return nil, fmt.Errorf("lỗi khi nhận luồng âm thanh WebSocket: %w", err)
 		}
 
-		switch opcode {
-		case wsOpcodeText:
+		switch msgType {
+		case websocket.TextMessage:
 			textStr := string(payload)
 			if strings.Contains(textStr, "Path:turn.end") {
 				// Hoàn thành tổng hợp cho phân đoạn này
-				_ = sendWSClose(rawConn)
+				_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"))
 				return audioBuf.Bytes(), nil
 			}
-		case wsOpcodeBinary:
+		case websocket.BinaryMessage:
 			if len(payload) >= 2 {
 				hLen := int(binary.BigEndian.Uint16(payload[0:2]))
 				if len(payload) > 2+hLen {
@@ -509,15 +369,11 @@ func SynthesizeSpeechChunk(voiceID, chunkText string) ([]byte, error) {
 					audioBuf.Write(audioChunk)
 				}
 			}
-		case wsOpcodePing:
-			_ = writeWSFrame(rawConn, wsOpcodePong, payload)
-		case wsOpcodeClose:
-			_ = sendWSClose(rawConn)
+		case websocket.CloseMessage:
 			return audioBuf.Bytes(), nil
 		}
 	}
 
-	_ = sendWSClose(rawConn)
 	if audioBuf.Len() == 0 {
 		return nil, fmt.Errorf("máy chủ giọng đọc không trả về dữ liệu âm thanh")
 	}
