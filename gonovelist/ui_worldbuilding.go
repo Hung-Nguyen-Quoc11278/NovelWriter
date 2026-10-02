@@ -476,12 +476,6 @@ func (r *coloredTagCheckboxRenderer) Refresh() {
 	r.container.Refresh()
 }
 
-func (r *coloredTagCheckboxRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{r.bgRect, r.checkBg, r.checkMark, r.dot, r.label}
-}
-
-func (r *coloredTagCheckboxRenderer) Destroy() {}
-
 // ColoredTagCheckGroup quản lý danh sách các ô chọn Thẻ có màu sắc động,
 // cung cấp API tương thích với CheckGroup (Options, Selected, SetOptions, SetSelected, SetTags).
 type ColoredTagCheckGroup struct {
