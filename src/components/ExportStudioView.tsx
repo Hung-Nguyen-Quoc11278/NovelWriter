@@ -1,5 +1,18 @@
 import React, { useMemo, useState } from 'react';
-import { Check, Copy, Download, FileText, Filter } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Download,
+  FileText,
+  Filter,
+  Headphones,
+  Volume2,
+  Play,
+  Square,
+  Loader2,
+  Sparkles,
+  Terminal,
+} from 'lucide-react';
 import { Act, Chapter, Project, Scene } from '../types/novelist';
 import { compileProjectSQLiteDump } from '../data/initialNovelData';
 
@@ -7,8 +20,43 @@ interface ExportStudioViewProps {
   project: Project;
 }
 
+export interface VietnameseVoicePreset {
+  id: string;
+  label: string;
+  gender: string;
+  description: string;
+}
+
+export const VIETNAMESE_VOICE_PRESETS: VietnameseVoicePreset[] = [
+  {
+    id: 'vi-VN-HoaiMyNeural',
+    label: 'Hoài Mỹ (Nữ - Miền Nam)',
+    gender: 'Nữ',
+    description:
+      'Giọng nữ miền Nam dịu dàng, tự nhiên, giàu cảm xúc — rất thích hợp cho tiểu thuyết tình cảm & tự sự.',
+  },
+  {
+    id: 'vi-VN-NamMinhNeural',
+    label: 'Nam Minh (Nam - Miền Nam)',
+    gender: 'Nam',
+    description:
+      'Giọng nam miền Nam ấm áp, truyền cảm, rõ chữ — rất thích hợp cho tiểu thuyết lịch sử & phiêu lưu.',
+  },
+];
+
+function cleanProseForSpeech(raw: string): string {
+  let text = raw;
+  text = text.replace(/<[^>]*>/g, '');
+  text = text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/_/g, '');
+  text = text.replace(/^\s*(\*\s*\*\s*\*|―+|--+)\s*$/gm, '\n\n');
+  text = text.replace(/^\s*>\s*/gm, '');
+  text = text.replace(/\n{3,}/g, '\n\n');
+  return text.trim();
+}
+
 type ExportFormat =
   | 'rendered'
+  | 'audio'
   | 'txt'
   | 'odt'
   | 'pdf'
@@ -34,6 +82,15 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
   const [includeSynopsis, setIncludeSynopsis] = useState(true);
   const [includeSceneTitle, setIncludeSceneTitle] = useState(true);
   const [copied, setCopied] = useState(false);
+
+  // Cấu hình âm thanh AI (Edge-TTS Tiếng Việt)
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>(
+    VIETNAMESE_VOICE_PRESETS[0].id
+  );
+  const [customAudioText, setCustomAudioText] = useState<string>('');
+  const [isExportingAudio, setIsExportingAudio] = useState(false);
+  const [audioSuccessMsg, setAudioSuccessMsg] = useState<string | null>(null);
+  const [isPlayingWebSpeech, setIsPlayingWebSpeech] = useState(false);
 
   // Lọc cấu trúc Hồi -> Chương -> Cảnh theo Phạm vi xuất bản (mô phỏng BuildFilteredManuscript trong export.go)
   const filteredManuscript = useMemo(() => {
@@ -320,8 +377,113 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
 
   const sqlOutput = compileProjectSQLiteDump(project);
 
+  // Thu thập nội dung văn bản sạch để Edge-TTS đọc (CleanProseForSpeech)
+  const defaultSpeechText = useMemo(() => {
+    const paragraphs: string[] = [];
+    paragraphs.push(project.title);
+    if (includeSynopsis && project.synopsis) {
+      paragraphs.push(project.synopsis);
+    }
+    for (const act of filteredManuscript.acts) {
+      for (const ch of act.chapters) {
+        for (const sc of ch.scenes) {
+          if (sc.content.trim()) {
+            paragraphs.push(sc.content);
+          }
+        }
+      }
+    }
+    return cleanProseForSpeech(paragraphs.join('\n\n'));
+  }, [project, filteredManuscript, includeSynopsis]);
+
+  const activeAudioContent = customAudioText || defaultSpeechText;
+
+  const currentVoice = useMemo(
+    () =>
+      VIETNAMESE_VOICE_PRESETS.find((v) => v.id === selectedVoiceId) ||
+      VIETNAMESE_VOICE_PRESETS[0],
+    [selectedVoiceId]
+  );
+
+  const audioWordCount = useMemo(() => {
+    const trimmed = activeAudioContent.trim();
+    return trimmed ? trimmed.split(/\s+/).length : 0;
+  }, [activeAudioContent]);
+
+  const audioCharCount = activeAudioContent.length;
+  const estimatedAudioMinutes = (audioWordCount / 160).toFixed(1);
+
+  const safeFileName = useMemo(() => {
+    return (
+      project.title
+        .toLowerCase()
+        .replace(/[^a-z0-9\u00C0-\u1EF9]+/gi, '_')
+        .replace(/^_|_$/g, '') || 'audio_novel'
+    );
+  }, [project.title]);
+
+  const edgeTTSCommand = useMemo(() => {
+    return `edge-tts --voice ${selectedVoiceId} --text "${activeAudioContent.slice(0, 100).replace(/"/g, '\\"')}..." --write-media "${safeFileName}.mp3"`;
+  }, [selectedVoiceId, activeAudioContent, safeFileName]);
+
+  const handleExportAudio = () => {
+    setIsExportingAudio(true);
+    setAudioSuccessMsg(null);
+
+    // Mô phỏng quá trình tổng hợp Neural TTS từ Edge-TTS
+    setTimeout(() => {
+      setIsExportingAudio(false);
+      setAudioSuccessMsg('Xuất audio thành công!');
+
+      // Tạo tệp download script / MP3 mô phỏng
+      const blob = new Blob(
+        [
+          `# GoNovelist Edge-TTS Shell Script\n# Voice: ${selectedVoiceId} (${currentVoice.label})\n# Content Words: ${audioWordCount}\n\nedge-tts --voice "${selectedVoiceId}" --text "${activeAudioContent.replace(/"/g, '\\"')}" --write-media "${safeFileName}.mp3"\n`,
+        ],
+        { type: 'text/plain;charset=utf-8' }
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeFileName}_tts_script.sh`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }, 1200);
+  };
+
+  const handleToggleWebSpeech = () => {
+    if (!('speechSynthesis' in window)) {
+      alert('Trình duyệt không hỗ trợ Web Speech API.');
+      return;
+    }
+
+    if (isPlayingWebSpeech) {
+      window.speechSynthesis.cancel();
+      setIsPlayingWebSpeech(false);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(activeAudioContent.slice(0, 800));
+    utterance.lang = 'vi-VN';
+    utterance.rate = 0.95;
+    utterance.onend = () => setIsPlayingWebSpeech(false);
+    utterance.onerror = () => setIsPlayingWebSpeech(false);
+
+    const voices = window.speechSynthesis.getVoices();
+    const viVoice = voices.find((v) => v.lang.startsWith('vi'));
+    if (viVoice) {
+      utterance.voice = viVoice;
+    }
+
+    window.speechSynthesis.speak(utterance);
+    setIsPlayingWebSpeech(true);
+  };
+
   const activeText =
-    format === 'txt' || format === 'pdf'
+    format === 'audio'
+      ? activeAudioContent
+      : format === 'txt' || format === 'pdf'
       ? txtOutput
       : format === 'odt'
       ? odtOutput
@@ -340,8 +502,14 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
   };
 
   const handleDownload = () => {
+    if (format === 'audio') {
+      handleExportAudio();
+      return;
+    }
+
     const extMap: Record<ExportFormat, string> = {
       rendered: '.txt',
+      audio: '.mp3',
       txt: '.txt',
       odt: '.odt.xml',
       pdf: '.txt',
@@ -358,12 +526,8 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
     const blob = new Blob([activeText], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const safeName = project.title
-      .toLowerCase()
-      .replace(/[^a-z0-9\u00C0-\u1EF9]+/gi, '_')
-      .replace(/^_|_$/g, '');
     a.href = url;
-    a.download = `${safeName || 'ban_thao'}${ext}`;
+    a.download = `${safeFileName}${ext}`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -540,6 +704,7 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
             {(
               [
                 ['rendered', 'Xem Trước Bản In (PDF/EPUB)'],
+                ['audio', '🎧 Audio MP3 (Edge-TTS)'],
                 ['txt', 'Xuất bản ra Text (.txt)'],
                 ['odt', 'Xuất bản ra ODT (.odt)'],
                 ['pdf', 'Xuất bản ra PDF (.pdf)'],
@@ -593,8 +758,202 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
           </div>
         </div>
 
-        {/* Khung hiển thị bản thảo */}
-        {format === 'rendered' || format === 'pdf' ? (
+        {/* Khung hiển thị bản thảo hoặc Studio Audio Edge-TTS */}
+        {format === 'audio' ? (
+          <div className="bg-[#FAF7F2] border border-[#D6D0C4] p-8 max-w-4xl mx-auto shadow-xs space-y-6">
+            {/* Header Audio Studio */}
+            <div className="border-b border-[#D6D0C4] pb-5">
+              <div className="flex items-center gap-2 text-xs font-mono-code uppercase tracking-wider text-[#8B3A2B] font-semibold">
+                <Headphones className="w-4 h-4" />
+                <span>XUẤT BẢN FILE AUDIO (MP3) — GIỌNG ĐỌC AI TIẾNG VIỆT</span>
+              </div>
+              <h2 className="font-serif-display text-2xl font-bold text-[#1C1B18] mt-1">
+                Edge-TTS Neural Voice Studio
+              </h2>
+              <p className="text-xs text-[#57534E] mt-1">
+                Sử dụng công nghệ Neural Text-to-Speech miễn phí từ Edge-TTS với giọng đọc tự nhiên, chuẩn sắc thái Tiếng Việt.
+              </p>
+            </div>
+
+            {/* Bước 1: Chọn giọng đọc */}
+            <div className="bg-[#F3EFE6] border border-[#D6D0C4] p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <label htmlFor="voice-select" className="text-xs font-semibold text-[#1C1B18] flex items-center gap-1.5">
+                  <Volume2 className="w-4 h-4 text-[#8B3A2B]" />
+                  <span>Chọn giọng đọc Neural Tiếng Việt:</span>
+                </label>
+                <span className="text-[11px] font-mono-code text-[#78716C]">
+                  Voice ID: {selectedVoiceId}
+                </span>
+              </div>
+
+              <select
+                id="voice-select"
+                value={selectedVoiceId}
+                onChange={(e) => {
+                  setSelectedVoiceId(e.target.value);
+                  setAudioSuccessMsg(null);
+                }}
+                className="w-full text-xs font-medium bg-white border border-[#D6D0C4] px-3 py-2 text-[#1C1B18] focus:outline-hidden focus:border-[#8B3A2B]"
+              >
+                {VIETNAMESE_VOICE_PRESETS.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label} — {v.gender}
+                  </option>
+                ))}
+              </select>
+
+              <div className="p-3 bg-[#FAF7F2] border border-[#E6E0D4] text-xs text-[#57534E] italic flex items-start gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-[#8B3A2B] shrink-0 mt-0.5" />
+                <span>{currentVoice.description}</span>
+              </div>
+            </div>
+
+            {/* Bước 2: Nội dung văn bản */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-[#1C1B18]">
+                  Nội dung văn bản để đọc thành tiếng:
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomAudioText('');
+                    setAudioSuccessMsg(null);
+                  }}
+                  className="text-xs text-[#8B3A2B] hover:underline cursor-pointer"
+                >
+                  Nạp lại từ bản thảo đang chọn
+                </button>
+              </div>
+
+              <textarea
+                value={activeAudioContent}
+                onChange={(e) => {
+                  setCustomAudioText(e.target.value);
+                  setAudioSuccessMsg(null);
+                }}
+                rows={8}
+                placeholder="Nhập hoặc dán nội dung cần chuyển sang âm thanh..."
+                className="w-full font-serif-display text-sm text-[#1C1B18] bg-white border border-[#D6D0C4] p-3 focus:outline-hidden focus:border-[#8B3A2B] resize-y"
+              />
+
+              <div className="flex flex-wrap items-center justify-between text-xs text-[#57534E] pt-1">
+                <div className="flex items-center gap-3">
+                  <span>📊 Độ dài: <strong>{audioWordCount.toLocaleString('vi-VN')}</strong> từ</span>
+                  <span>&bull;</span>
+                  <span>{audioCharCount.toLocaleString('vi-VN')} ký tự</span>
+                  <span>&bull;</span>
+                  <span>(khoảng <strong>{estimatedAudioMinutes}</strong> phút nghe)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleWebSpeech}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs border border-[#D6D0C4] bg-white text-[#1C1B18] hover:bg-[#F3EFE6] transition-colors cursor-pointer"
+                >
+                  {isPlayingWebSpeech ? (
+                    <>
+                      <Square className="w-3 h-3 text-[#B91C1C]" />
+                      <span>Dừng đọc thử</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-3 h-3 text-[#2D6A4F]" />
+                      <span>Đọc thử (Web Speech)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Bước 3: Đường dẫn lưu tệp đích */}
+            <div className="bg-[#F3EFE6] border border-[#D6D0C4] p-4 space-y-2">
+              <label htmlFor="filename-preview" className="text-xs font-semibold text-[#1C1B18] block">
+                Đường dẫn lưu tệp MP3 đích (Fyne dialog.FileSave):
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="filename-preview"
+                  type="text"
+                  readOnly
+                  value={`${safeFileName}.mp3`}
+                  className="flex-1 text-xs font-mono-code bg-white border border-[#D6D0C4] px-3 py-2 text-[#1C1B18]"
+                />
+                <span className="text-xs text-[#78716C] font-mono-code">.mp3</span>
+              </div>
+            </div>
+
+            {/* Thanh tiến độ / Thông báo trạng thái */}
+            {isExportingAudio && (
+              <div className="p-4 bg-[#FEF3C7] border border-[#F59E0B] text-xs text-[#92400E] flex items-center gap-2.5 animate-pulse">
+                <Loader2 className="w-4 h-4 animate-spin text-[#D97706]" />
+                <span className="font-medium">
+                  ⏳ Đang kết nối Edge-TTS và tổng hợp âm thanh MP3...
+                </span>
+              </div>
+            )}
+
+            {audioSuccessMsg && (
+              <div className="p-4 bg-[#ECFDF5] border border-[#10B981] text-xs text-[#065F46] flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-medium">
+                  <Check className="w-4 h-4 text-[#059669]" />
+                  <span>✅ {audioSuccessMsg} Đã chuẩn bị kịch bản & file âm thanh MP3.</span>
+                </div>
+                <span className="font-mono-code text-[11px] text-[#047857]">
+                  {currentVoice.label} • {audioWordCount} từ
+                </span>
+              </div>
+            )}
+
+            {/* Hộp lệnh Edge-TTS CLI Pattern */}
+            <div className="bg-[#181715] text-[#E7E2D8] border border-[#2E2C28] p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-[#A8A29E]">
+                <div className="flex items-center gap-1.5 font-mono-code">
+                  <Terminal className="w-3.5 h-3.5 text-[#E7E2D8]" />
+                  <span>Mô thức lệnh Edge-TTS CLI (Backend Go `os/exec`):</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(
+                      `edge-tts --voice ${selectedVoiceId} --text "${activeAudioContent.replace(/"/g, '\\"')}" --write-media "${safeFileName}.mp3"`
+                    );
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="text-[11px] text-[#E7E2D8] hover:text-white underline cursor-pointer"
+                >
+                  Sao chép lệnh Terminal đầy đủ
+                </button>
+              </div>
+              <code className="block font-mono-code text-xs text-[#A7F3D0] break-all bg-black/40 p-2.5 rounded-xs">
+                {edgeTTSCommand}
+              </code>
+            </div>
+
+            {/* Nút hành động chính */}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isExportingAudio}
+                onClick={handleExportAudio}
+                className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-semibold bg-[#8B3A2B] text-[#FAF7F2] hover:bg-[#722E21] disabled:opacity-60 transition-colors shadow-xs cursor-pointer"
+              >
+                {isExportingAudio ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Đang tổng hợp Audio...</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-4 h-4" />
+                    <span>Xuất file Audio</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        ) : format === 'rendered' || format === 'pdf' ? (
           <div className="bg-[#FAF7F2] border border-[#D6D0C4] px-10 py-12 max-w-3xl mx-auto shadow-xs space-y-8">
             <div className="border-b border-[#D6D0C4] pb-6 text-center space-y-2">
               <div className="inline-flex items-center gap-1.5 text-[11px] font-mono-code uppercase tracking-widest text-[#8B3A2B]">

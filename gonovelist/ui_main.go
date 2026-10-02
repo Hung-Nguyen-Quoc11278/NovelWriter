@@ -147,6 +147,9 @@ func NewNovelistUI(app fyne.App, window fyne.Window, store *Store) (*NovelistUI,
 		func(delta float32) { ui.AdjustFontSize(delta) },
 		func() { ui.ResetFontSize() },
 	)
+	ui.editorPanel.SetOnAudioExport(func() {
+		ui.ShowAudioExportDialog()
+	})
 	ui.editorPanel.UpdateFontSizeIndicator(fontTheme.TextSize(), fontTheme.ZoomPercent())
 
 	ui.buildMainMenu()
@@ -201,6 +204,10 @@ func (ui *NovelistUI) buildMainMenu() {
 		}),
 		fyne.NewMenuItem("Xuất bản ra HTML (.html)...", func() {
 			ui.ShowExportDialog(ExportFormatHTML)
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("🎧 Xuất bản ra Audio MP3 (Edge-TTS)...", func() {
+			ui.ShowAudioExportDialog()
 		}),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Cài đặt...", func() {

@@ -373,6 +373,7 @@ type EditorPanel struct {
 	window    fyne.Window
 	projectID int64
 	onSaved   func()
+	onAudioExport func()
 
 	mu          sync.Mutex
 	activeScene *Scene
@@ -641,6 +642,14 @@ func (ep *EditorPanel) buildUI() {
 	})
 	previewToggleBtn.Importance = widget.LowImportance
 
+	audioBtn := widget.NewButtonWithIcon("🎧 Xuất Audio", theme.MediaPlayIcon(), func() {
+		PlayUIClickSound()
+		if ep.onAudioExport != nil {
+			ep.onAudioExport()
+		}
+	})
+	audioBtn.Importance = widget.LowImportance
+
 	ep.toolbarWrapLayout = NewResponsiveToolbarWrapLayout(6, 6, true, refreshHeaderHeight)
 	ep.formattingToolbar = container.New(
 		ep.toolbarWrapLayout,
@@ -652,6 +661,7 @@ func (ep *EditorPanel) buildUI() {
 		headingBtn,
 		dividerBtn,
 		previewToggleBtn,
+		audioBtn,
 	)
 
 	// =========================================================================
@@ -811,6 +821,11 @@ func (ep *EditorPanel) ForceLayoutRefresh() {
 func (ep *EditorPanel) BindZoomHandlers(onDelta func(delta float32), onReset func()) {
 	ep.onZoomDelta = onDelta
 	ep.onZoomReset = onReset
+}
+
+// SetOnAudioExport gán hàm xử lý sự kiện khi người dùng nhấn nút xuất Audio trên thanh công cụ.
+func (ep *EditorPanel) SetOnAudioExport(fn func()) {
+	ep.onAudioExport = fn
 }
 
 // UpdateFontSizeIndicator cập nhật nhãn hiển thị cỡ chữ hiện tại (px & %) và làm mới bố cục dòng tiêu đề.
