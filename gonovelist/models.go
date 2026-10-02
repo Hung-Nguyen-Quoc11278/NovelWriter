@@ -85,11 +85,56 @@ type Chapter struct {
 	CreatedAt   time.Time
 }
 
-// Tag đại diện cho một Thẻ phân loại đa năng trong tác phẩm (Ví dụ: "Thiên giới", "Khu vực cấm").
+// DefaultTagColor là mã màu Hex mặc định cho Thẻ mới nếu người dùng chưa chọn màu.
+const DefaultTagColor = "#3498db"
+
+// Tag đại diện cho một Thẻ phân loại đa năng có mã màu Hex trong tác phẩm (Ví dụ: "Thiên giới", "Khu vực cấm").
 type Tag struct {
 	ID     int64
 	BookID int64
 	Name   string
+	Color  string
+}
+
+// TagColorPreset định nghĩa một mẫu màu gợi ý kèm tên gọi Tiếng Việt cho giao diện chọn màu thẻ.
+type TagColorPreset struct {
+	Label string
+	Hex   string
+}
+
+// DefaultTagColorPresets trả về bảng màu Hex gợi ý cho các nhóm Thẻ trong tiểu thuyết.
+func DefaultTagColorPresets() []TagColorPreset {
+	return []TagColorPreset{
+		{Label: "Xanh lam (#3498db)", Hex: "#3498db"},
+		{Label: "Đỏ chu sa (#e74c3c)", Hex: "#e74c3c"},
+		{Label: "Xanh ngọc bích (#2ecc71)", Hex: "#2ecc71"},
+		{Label: "Tím huyền bí (#9b59b6)", Hex: "#9b59b6"},
+		{Label: "Vàng hổ phách (#f39c12)", Hex: "#f39c12"},
+		{Label: "Xanh lục bảo (#1abc9c)", Hex: "#1abc9c"},
+		{Label: "Cam hoàng hôn (#e67e22)", Hex: "#e67e22"},
+		{Label: "Hồng san hô (#d81b60)", Hex: "#d81b60"},
+		{Label: "Xám đá phiến (#34495e)", Hex: "#34495e"},
+	}
+}
+
+// NormalizeHexColor chuẩn hóa chuỗi mã màu Hex (VD: "#3498db"), trả về DefaultTagColor nếu không hợp lệ.
+func NormalizeHexColor(raw string) string {
+	clean := strings.TrimSpace(raw)
+	if clean == "" {
+		return DefaultTagColor
+	}
+	if !strings.HasPrefix(clean, "#") {
+		clean = "#" + clean
+	}
+	if len(clean) != 7 && len(clean) != 4 {
+		return DefaultTagColor
+	}
+	for _, r := range clean[1:] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return DefaultTagColor
+		}
+	}
+	return strings.ToLower(clean)
 }
 
 // Character đại diện cho một Nhân vật trong dự án tiểu thuyết.

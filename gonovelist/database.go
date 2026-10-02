@@ -116,6 +116,7 @@ func (s *Store) Migrate() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		book_id INTEGER NOT NULL,
 		name TEXT NOT NULL,
+		color TEXT NOT NULL DEFAULT '#3498db',
 		FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
 	);
 
@@ -170,8 +171,48 @@ func (s *Store) Migrate() error {
 		FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 	);
 	`
-	_, err := s.db.Exec(ddl)
-	return err
+	if _, err := s.db.Exec(ddl); err != nil {
+		return err
+	}
+
+	// Migration an toàn cho các cơ sở dữ liệu cũ chưa có cột color trong bảng tags
+	if err := s.ensureTagColorColumn(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureTagColorColumn kiểm tra bảng tags hiện có và tự động thêm cột color TEXT DEFAULT '#3498db' nếu chưa tồn tại.
+func (s *Store) ensureTagColorColumn() error {
+	rows, err := s.db.Query(`PRAGMA table_info(tags)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasColorCol := false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err == nil {
+			if strings.EqualFold(name, "color") {
+				hasColorCol = true
+				break
+			}
+		}
+	}
+
+	if !hasColorCol {
+		if _, err := s.db.Exec(`ALTER TABLE tags ADD COLUMN color TEXT DEFAULT '#3498db'`); err != nil {
+			return fmt.Errorf("không thể nâng cấp cột color cho bảng tags: %w", err)
+		}
+	}
+
+	_, _ = s.db.Exec(`UPDATE tags SET color = '#3498db' WHERE color IS NULL OR TRIM(color) = ''`)
+	return nil
 }
 
 // SeedDefaultProjectIfEmpty tạo một dự án mẫu tiếng Việt nếu cơ sở dữ liệu trống,
@@ -198,19 +239,19 @@ func (s *Store) SeedDefaultProjectIfEmpty() error {
 }
 
 func (s *Store) seedWorldBuildingExtrasForProject(bookID int64) error {
-	tagCoVat, err := s.CreateTag(bookID, "Cổ vật")
+	tagCoVat, err := s.CreateTag(bookID, "Cổ vật", "#f39c12")
 	if err != nil {
 		return err
 	}
-	tagKhuVucCam, err := s.CreateTag(bookID, "Khu vực cấm")
+	tagKhuVucCam, err := s.CreateTag(bookID, "Khu vực cấm", "#e74c3c")
 	if err != nil {
 		return err
 	}
-	tagThienGioi, err := s.CreateTag(bookID, "Thiên giới")
+	tagThienGioi, err := s.CreateTag(bookID, "Thiên giới", "#9b59b6")
 	if err != nil {
 		return err
 	}
-	tagHoangGia, err := s.CreateTag(bookID, "Bí mật triều đình")
+	tagHoangGia, err := s.CreateTag(bookID, "Bí mật triều đình", "#3498db")
 	if err != nil {
 		return err
 	}
@@ -282,10 +323,10 @@ func (s *Store) SeedVietnameseSampleProject() (*Project, error) {
 		return nil, err
 	}
 
-	tagCoVat, _ := s.CreateTag(proj.ID, "Cổ vật")
-	tagKhuVucCam, _ := s.CreateTag(proj.ID, "Khu vực cấm")
-	tagThienGioi, _ := s.CreateTag(proj.ID, "Thiên giới")
-	tagHoangGia, _ := s.CreateTag(proj.ID, "Bí mật triều đình")
+	tagCoVat, _ := s.CreateTag(proj.ID, "Cổ vật", "#f39c12")
+	tagKhuVucCam, _ := s.CreateTag(proj.ID, "Khu vực cấm", "#e74c3c")
+	tagThienGioi, _ := s.CreateTag(proj.ID, "Thiên giới", "#9b59b6")
+	tagHoangGia, _ := s.CreateTag(proj.ID, "Bí mật triều đình", "#3498db")
 
 	elena, err := s.CreateCharacter(proj.ID, "Lê Ngọc Liên", "Nhân vật chính", "Nghệ nhân chế tác và phục chế thấu kính tại phố cổ Hội An.")
 	if err != nil {
@@ -950,9 +991,9 @@ func (s *Store) MoveScene(sceneID int64, direction int) error {
 
 // ==================== UNIVERSAL TAGGING SYSTEM (tags & entity_tags) ====================
 
-// ListTags trả về danh sách tất cả các Thẻ của một cuốn sách (book_id).
+// ListTags trả về danh sách tất cả các Thẻ (kèm mã màu Hex) của một cuốn sách (book_id).
 func (s *Store) ListTags(bookID int64) ([]Tag, error) {
-	rows, err := s.db.Query(`SELECT id, book_id, name FROM tags WHERE book_id = ? ORDER BY name ASC`, bookID)
+	rows, err := s.db.Query(`SELECT id, book_id, name, COALESCE(color, '#3498db') FROM tags WHERE book_id = ? ORDER BY name ASC`, bookID)
 	if err != nil {
 		return nil, err
 	}
@@ -961,27 +1002,37 @@ func (s *Store) ListTags(bookID int64) ([]Tag, error) {
 	var list []Tag
 	for rows.Next() {
 		var t Tag
-		if err := rows.Scan(&t.ID, &t.BookID, &t.Name); err != nil {
+		if err := rows.Scan(&t.ID, &t.BookID, &t.Name, &t.Color); err != nil {
 			return nil, err
 		}
+		t.Color = NormalizeHexColor(t.Color)
 		list = append(list, t)
 	}
 	return list, rows.Err()
 }
 
-// CreateTag tạo một Thẻ mới cho tác phẩm (nếu trùng tên thì trả về thẻ đã có).
-func (s *Store) CreateTag(bookID int64, name string) (*Tag, error) {
+// CreateTag tạo một Thẻ mới với mã màu tùy chọn (mặc định '#3498db' nếu không truyền màu).
+func (s *Store) CreateTag(bookID int64, name string, optionalColor ...string) (*Tag, error) {
 	clean := strings.TrimSpace(name)
 	if clean == "" {
 		return nil, fmt.Errorf("tên thẻ không được để trống")
 	}
+	hexColor := DefaultTagColor
+	if len(optionalColor) > 0 {
+		hexColor = NormalizeHexColor(optionalColor[0])
+	}
+
 	existing, _ := s.ListTags(bookID)
 	for _, t := range existing {
 		if strings.EqualFold(t.Name, clean) {
+			if len(optionalColor) > 0 && t.Color != hexColor {
+				_ = s.UpdateTag(t.ID, clean, hexColor)
+				t.Color = hexColor
+			}
 			return &t, nil
 		}
 	}
-	res, err := s.db.Exec(`INSERT INTO tags (book_id, name) VALUES (?, ?)`, bookID, clean)
+	res, err := s.db.Exec(`INSERT INTO tags (book_id, name, color) VALUES (?, ?, ?)`, bookID, clean, hexColor)
 	if err != nil {
 		return nil, err
 	}
@@ -989,7 +1040,18 @@ func (s *Store) CreateTag(bookID int64, name string) (*Tag, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Tag{ID: id, BookID: bookID, Name: clean}, nil
+	return &Tag{ID: id, BookID: bookID, Name: clean, Color: hexColor}, nil
+}
+
+// UpdateTag cập nhật tên và mã màu Hex của một Thẻ đã tồn tại.
+func (s *Store) UpdateTag(tagID int64, name string, color string) error {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return fmt.Errorf("tên thẻ không được để trống")
+	}
+	hexColor := NormalizeHexColor(color)
+	_, err := s.db.Exec(`UPDATE tags SET name = ?, color = ? WHERE id = ?`, clean, hexColor, tagID)
+	return err
 }
 
 // DeleteTag xóa một Thẻ và toàn bộ liên kết trong entity_tags.
@@ -998,10 +1060,10 @@ func (s *Store) DeleteTag(tagID int64) error {
 	return err
 }
 
-// GetEntityTags trả về danh sách các Thẻ được gắn cho một thực thể cụ thể (character/location/prop/event).
+// GetEntityTags trả về danh sách các Thẻ (kèm mã màu Hex) được gắn cho một thực thể cụ thể (character/location/prop/event).
 func (s *Store) GetEntityTags(entityType EntityType, entityID int64) ([]Tag, error) {
 	rows, err := s.db.Query(`
-		SELECT t.id, t.book_id, t.name
+		SELECT t.id, t.book_id, t.name, COALESCE(t.color, '#3498db')
 		FROM tags t
 		INNER JOIN entity_tags et ON et.tag_id = t.id
 		WHERE et.entity_type = ? AND et.entity_id = ?
@@ -1015,9 +1077,10 @@ func (s *Store) GetEntityTags(entityType EntityType, entityID int64) ([]Tag, err
 	var tags []Tag
 	for rows.Next() {
 		var t Tag
-		if err := rows.Scan(&t.ID, &t.BookID, &t.Name); err != nil {
+		if err := rows.Scan(&t.ID, &t.BookID, &t.Name, &t.Color); err != nil {
 			return nil, err
 		}
+		t.Color = NormalizeHexColor(t.Color)
 		tags = append(tags, t)
 	}
 	return tags, rows.Err()

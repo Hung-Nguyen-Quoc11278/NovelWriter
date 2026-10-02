@@ -70,11 +70,12 @@ CREATE TABLE IF NOT EXISTS events (
     FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
--- Hệ thống Thẻ đa năng (Universal Tagging System)
+-- Hệ thống Thẻ đa năng có phân loại màu sắc (Universal Color-Coded Tagging System)
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL,
     name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#3498db',
     FOREIGN KEY (book_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 

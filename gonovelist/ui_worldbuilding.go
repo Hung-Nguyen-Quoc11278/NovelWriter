@@ -2,15 +2,55 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
+
+// parseHexColor chuyển đổi chuỗi mã màu Hex (VD: "#3498db") sang đối tượng color.NRGBA của Fyne.
+func parseHexColor(hexStr string) color.NRGBA {
+	clean := strings.TrimPrefix(NormalizeHexColor(hexStr), "#")
+	if len(clean) == 3 {
+		clean = string([]byte{clean[0], clean[0], clean[1], clean[1], clean[2], clean[2]})
+	}
+	var r, g, b uint8 = 0x34, 0x98, 0xdb
+	if len(clean) == 6 {
+		_, _ = fmt.Sscanf(clean, "%02x%02x%02x", &r, &g, &b)
+	}
+	return color.NRGBA{R: r, G: g, B: b, A: 0xff}
+}
+
+// parseHexTintColor tạo màu nền bán trong suốt (alpha thấp) từ mã màu Hex để tô nền huy hiệu Thẻ.
+func parseHexTintColor(hexStr string, alpha uint8) color.NRGBA {
+	c := parseHexColor(hexStr)
+	c.A = alpha
+	return c
+}
+
+// newColorCircleIndicator khởi tạo một hình tròn màu (canvas.Circle) có kích thước cố định để hiển thị màu sắc thẻ.
+func newColorCircleIndicator(hexStr string, diameter float32) (*canvas.Circle, *fyne.Container) {
+	c := parseHexColor(hexStr)
+	circle := canvas.NewCircle(c)
+	circle.StrokeColor = color.NRGBA{R: 0, G: 0, B: 0, A: 45}
+	circle.StrokeWidth = 1
+	wrapper := container.NewGridWrap(fyne.NewSize(diameter, diameter), circle)
+	return circle, wrapper
+}
+
+// firstTagColorOrDefault lấy mã màu Hex của thẻ đầu tiên trong danh sách (hoặc màu xám nhẹ nếu chưa gắn thẻ).
+func firstTagColorOrDefault(tags []Tag) string {
+	if len(tags) > 0 && strings.TrimSpace(tags[0].Color) != "" {
+		return NormalizeHexColor(tags[0].Color)
+	}
+	return "#94a3b8"
+}
 
 const allTagsFilterLabel = "Tất cả thẻ"
 
@@ -53,6 +93,7 @@ type WorldBuildingHub struct {
 	selectedLocID   int64
 	selectedPropID  int64
 	selectedEventID int64
+	selectedTagID   int64
 
 	// Biểu mẫu Tab 1: Nhân vật
 	charNameEntry *VietnameseEntry
@@ -78,8 +119,16 @@ type WorldBuildingHub struct {
 	eventDescEntry  *VietnameseEntry
 	eventTagCheck   *widget.CheckGroup
 
-	// Biểu mẫu Quản lý Thẻ toàn cục
-	newTagEntry *VietnameseEntry
+	// Biểu mẫu Quản lý Thẻ toàn cục & Chọn màu sắc thẻ
+	newTagEntry         *VietnameseEntry
+	quickColorSelect    *widget.Select
+	quickColorCircle    *canvas.Circle
+	tagFormNameEntry    *VietnameseEntry
+	tagFormHexEntry     *VietnameseEntry
+	tagFormPresetSelect *widget.Select
+	tagFormPreviewDot   *canvas.Circle
+	tagFormPreviewBg    *canvas.Rectangle
+	tagFormPreviewLabel *widget.Label
 }
 
 // ShowWorldBuildingHub mở Trung tâm Quản lý Thế giới & Hệ thống Thẻ Đa năng (Multi-Tab Dialog).
@@ -109,16 +158,39 @@ func ShowWorldBuildingHub(store *Store, parentWin fyne.Window, bookID int64, onU
 }
 
 func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
-	// Thanh tạo Thẻ nhanh ở trên cùng (Global Tag Bar)
+	// Thanh tạo Thẻ nhanh ở trên cùng kèm chọn Màu sắc thẻ (Global Tag Bar)
 	h.newTagEntry = NewVietEntry()
 	h.newTagEntry.SetPlaceHolder("Nhập tên thẻ mới (VD: Thiên giới, Khu vực cấm, Cổ vật)...")
 
-	quickAddTagBtn := widget.NewButtonWithIcon("Tạo Thẻ Mới", theme.ContentAddIcon(), func() {
+	presets := DefaultTagColorPresets()
+	presetLabels := make([]string, len(presets))
+	labelToHex := make(map[string]string, len(presets))
+	for i, p := range presets {
+		presetLabels[i] = p.Label
+		labelToHex[p.Label] = p.Hex
+	}
+
+	selectedQuickHex := DefaultTagColor
+	var quickDotBox *fyne.Container
+	h.quickColorCircle, quickDotBox = newColorCircleIndicator(selectedQuickHex, 18)
+
+	h.quickColorSelect = widget.NewSelect(presetLabels, func(selected string) {
+		if hex, ok := labelToHex[selected]; ok {
+			selectedQuickHex = hex
+			h.quickColorCircle.FillColor = parseHexColor(hex)
+			h.quickColorCircle.Refresh()
+		}
+	})
+	if len(presetLabels) > 0 {
+		h.quickColorSelect.SetSelected(presetLabels[0])
+	}
+
+	quickAddTagBtn := widget.NewButtonWithIcon("Thêm thẻ mới", theme.ContentAddIcon(), func() {
 		name := strings.TrimSpace(h.newTagEntry.Text)
 		if name == "" {
 			return
 		}
-		if _, err := h.store.CreateTag(h.bookID, name); err != nil {
+		if _, err := h.store.CreateTag(h.bookID, name, selectedQuickHex); err != nil {
 			dialog.ShowError(err, h.parentWin)
 			return
 		}
@@ -130,11 +202,18 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 	})
 	quickAddTagBtn.Importance = widget.HighImportance
 
+	rightQuickControls := container.NewHBox(
+		widget.NewLabel("Màu sắc thẻ:"),
+		container.NewCenter(quickDotBox),
+		h.quickColorSelect,
+		quickAddTagBtn,
+	)
+
 	globalTagHeader := container.NewBorder(
 		nil,
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("🏷️ Quản lý Thẻ nhanh:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		quickAddTagBtn,
+		widget.NewLabelWithStyle("🏷️ Thêm thẻ nhanh:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		rightQuickControls,
 		h.newTagEntry,
 	)
 
@@ -164,9 +243,11 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		func() int { return len(h.filteredChars) },
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Tên nhân vật", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
 			sub := widget.NewLabel("Vai trò • #Thẻ")
 			sub.Truncation = fyne.TextTruncateEllipsis
-			return container.NewVBox(title, sub)
+			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
+			return container.NewVBox(title, subRow)
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
 			if i < 0 || i >= len(h.filteredChars) {
@@ -175,7 +256,22 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 			c := h.filteredChars[i]
 			box := obj.(*fyne.Container)
 			box.Objects[0].(*widget.Label).SetText("👤 " + c.Name)
-			box.Objects[1].(*widget.Label).SetText(fmt.Sprintf("%s  |  %s", c.Role, FormatTagNames(c.Tags)))
+			subRow := box.Objects[1].(*fyne.Container)
+			for _, child := range subRow.Objects {
+				switch w := child.(type) {
+				case *widget.Label:
+					w.SetText(fmt.Sprintf("%s  |  %s", c.Role, FormatTagNames(c.Tags)))
+				case *fyne.Container:
+					if len(w.Objects) > 0 {
+						if wrap, ok := w.Objects[0].(*fyne.Container); ok && len(wrap.Objects) > 0 {
+							if circle, ok := wrap.Objects[0].(*canvas.Circle); ok {
+								circle.FillColor = parseHexColor(firstTagColorOrDefault(c.Tags))
+								circle.Refresh()
+							}
+						}
+					}
+				}
+			}
 		},
 	)
 
@@ -312,9 +408,11 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		func() int { return len(h.filteredLocs) },
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Tên địa điểm", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
 			sub := widget.NewLabel("#Thẻ")
 			sub.Truncation = fyne.TextTruncateEllipsis
-			return container.NewVBox(title, sub)
+			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
+			return container.NewVBox(title, subRow)
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
 			if i < 0 || i >= len(h.filteredLocs) {
@@ -323,7 +421,22 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 			l := h.filteredLocs[i]
 			box := obj.(*fyne.Container)
 			box.Objects[0].(*widget.Label).SetText("🏛️ " + l.Name)
-			box.Objects[1].(*widget.Label).SetText(FormatTagNames(l.Tags))
+			subRow := box.Objects[1].(*fyne.Container)
+			for _, child := range subRow.Objects {
+				switch w := child.(type) {
+				case *widget.Label:
+					w.SetText(FormatTagNames(l.Tags))
+				case *fyne.Container:
+					if len(w.Objects) > 0 {
+						if wrap, ok := w.Objects[0].(*fyne.Container); ok && len(wrap.Objects) > 0 {
+							if circle, ok := wrap.Objects[0].(*canvas.Circle); ok {
+								circle.FillColor = parseHexColor(firstTagColorOrDefault(l.Tags))
+								circle.Refresh()
+							}
+						}
+					}
+				}
+			}
 		},
 	)
 
@@ -449,9 +562,11 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		func() int { return len(h.filteredProps) },
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Tên vật phẩm", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
 			sub := widget.NewLabel("Phân loại • #Thẻ")
 			sub.Truncation = fyne.TextTruncateEllipsis
-			return container.NewVBox(title, sub)
+			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
+			return container.NewVBox(title, subRow)
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
 			if i < 0 || i >= len(h.filteredProps) {
@@ -460,7 +575,22 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 			p := h.filteredProps[i]
 			box := obj.(*fyne.Container)
 			box.Objects[0].(*widget.Label).SetText("🧭 " + p.Name)
-			box.Objects[1].(*widget.Label).SetText(fmt.Sprintf("[%s]  %s", p.Category, FormatTagNames(p.Tags)))
+			subRow := box.Objects[1].(*fyne.Container)
+			for _, child := range subRow.Objects {
+				switch w := child.(type) {
+				case *widget.Label:
+					w.SetText(fmt.Sprintf("[%s]  %s", p.Category, FormatTagNames(p.Tags)))
+				case *fyne.Container:
+					if len(w.Objects) > 0 {
+						if wrap, ok := w.Objects[0].(*fyne.Container); ok && len(wrap.Objects) > 0 {
+							if circle, ok := wrap.Objects[0].(*canvas.Circle); ok {
+								circle.FillColor = parseHexColor(firstTagColorOrDefault(p.Tags))
+								circle.Refresh()
+							}
+						}
+					}
+				}
+			}
 		},
 	)
 
@@ -605,9 +735,11 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		func() int { return len(h.filteredEvents) },
 		func() fyne.CanvasObject {
 			title := widget.NewLabelWithStyle("Mốc sự kiện", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 12)
 			sub := widget.NewLabel("#Thẻ")
 			sub.Truncation = fyne.TextTruncateEllipsis
-			return container.NewVBox(title, sub)
+			subRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, sub)
+			return container.NewVBox(title, subRow)
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
 			if i < 0 || i >= len(h.filteredEvents) {
@@ -616,7 +748,22 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 			ev := h.filteredEvents[i]
 			box := obj.(*fyne.Container)
 			box.Objects[0].(*widget.Label).SetText(fmt.Sprintf("⏳ [Mốc #%d] %s", ev.TimelineOrder, ev.Title))
-			box.Objects[1].(*widget.Label).SetText(FormatTagNames(ev.Tags))
+			subRow := box.Objects[1].(*fyne.Container)
+			for _, child := range subRow.Objects {
+				switch w := child.(type) {
+				case *widget.Label:
+					w.SetText(FormatTagNames(ev.Tags))
+				case *fyne.Container:
+					if len(w.Objects) > 0 {
+						if wrap, ok := w.Objects[0].(*fyne.Container); ok && len(wrap.Objects) > 0 {
+							if circle, ok := wrap.Objects[0].(*canvas.Circle); ok {
+								circle.FillColor = parseHexColor(firstTagColorOrDefault(ev.Tags))
+								circle.Refresh()
+							}
+						}
+					}
+				}
+			}
 		},
 	)
 
@@ -740,34 +887,170 @@ func (h *WorldBuildingHub) clearEventForm() {
 	h.eventTagCheck.SetSelected([]string{})
 }
 
-// ==================== TAB 5: QUẢN LÝ THẺ TOÀN CỤC (GLOBAL TAG MANAGER) ====================
+// ==================== TAB 5: QUẢN LÝ THẺ TOÀN CỤC & MÀU SẮC THẺ (COLOR-CODED TAG MANAGER) ====================
 
 func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
+	presets := DefaultTagColorPresets()
+	presetLabels := make([]string, len(presets))
+	labelToHex := make(map[string]string, len(presets))
+	hexToLabel := make(map[string]string, len(presets))
+	for i, p := range presets {
+		presetLabels[i] = p.Label
+		labelToHex[p.Label] = p.Hex
+		hexToLabel[strings.ToLower(p.Hex)] = p.Label
+	}
+
+	h.tagFormNameEntry = NewVietEntry()
+	h.tagFormNameEntry.SetPlaceHolder("Nhập tên thẻ (VD: Thiên giới, Khu vực cấm, Cổ vật)...")
+
+	h.tagFormHexEntry = NewVietEntry()
+	h.tagFormHexEntry.SetPlaceHolder("#3498db")
+	h.tagFormHexEntry.SetText(DefaultTagColor)
+
+	// Huy hiệu xem trước màu sắc thẻ trực tiếp (sử dụng canvas.Rectangle & canvas.Circle)
+	var previewDotWrap *fyne.Container
+	h.tagFormPreviewDot, previewDotWrap = newColorCircleIndicator(DefaultTagColor, 16)
+	h.tagFormPreviewBg = canvas.NewRectangle(parseHexTintColor(DefaultTagColor, 42))
+	h.tagFormPreviewBg.StrokeColor = parseHexColor(DefaultTagColor)
+	h.tagFormPreviewBg.StrokeWidth = 1.5
+	h.tagFormPreviewBg.CornerRadius = 6
+	h.tagFormPreviewLabel = widget.NewLabelWithStyle("🏷️ #Xem trước thẻ  (#3498db)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+	previewBadge := container.NewMax(
+		h.tagFormPreviewBg,
+		container.NewPadded(container.NewHBox(
+			container.NewCenter(previewDotWrap),
+			h.tagFormPreviewLabel,
+		)),
+	)
+
+	updateLiveTagPreview := func() {
+		hex := NormalizeHexColor(h.tagFormHexEntry.Text)
+		tagName := strings.TrimSpace(h.tagFormNameEntry.Text)
+		if tagName == "" {
+			tagName = "Xem trước thẻ"
+		}
+		h.tagFormPreviewDot.FillColor = parseHexColor(hex)
+		h.tagFormPreviewDot.Refresh()
+		h.tagFormPreviewBg.FillColor = parseHexTintColor(hex, 42)
+		h.tagFormPreviewBg.StrokeColor = parseHexColor(hex)
+		h.tagFormPreviewBg.Refresh()
+		h.tagFormPreviewLabel.SetText(fmt.Sprintf("🏷️ #%s  (%s)", tagName, hex))
+	}
+
+	h.tagFormNameEntry.SetOnChangedCallback(func(_ string) {
+		updateLiveTagPreview()
+	})
+	h.tagFormHexEntry.SetOnChangedCallback(func(_ string) {
+		updateLiveTagPreview()
+	})
+
+	h.tagFormPresetSelect = widget.NewSelect(presetLabels, func(selected string) {
+		if hex, ok := labelToHex[selected]; ok {
+			h.tagFormHexEntry.SetText(hex)
+			updateLiveTagPreview()
+		}
+	})
+	if len(presetLabels) > 0 {
+		h.tagFormPresetSelect.SetSelected(presetLabels[0])
+	}
+
+	// Bảng nút chọn màu nhanh trực quan
+	paletteGrid := container.NewGridWithColumns(3)
+	for _, preset := range presets {
+		pHex := preset.Hex
+		pLabel := preset.Label
+		_, dotBox := newColorCircleIndicator(pHex, 14)
+		colorBtn := widget.NewButton(pLabel, func() {
+			h.tagFormHexEntry.SetText(pHex)
+			h.tagFormPresetSelect.SetSelected(pLabel)
+			updateLiveTagPreview()
+		})
+		colorBtn.Importance = widget.LowImportance
+		paletteGrid.Add(container.NewBorder(nil, nil, container.NewCenter(dotBox), nil, colorBtn))
+	}
+
+	// Danh sách Thẻ bên trái với huy hiệu màu sắc (canvas.Circle + canvas.Rectangle)
 	h.tagList = widget.NewList(
 		func() int { return len(h.tags) },
 		func() fyne.CanvasObject {
+			bgRect := canvas.NewRectangle(parseHexTintColor(DefaultTagColor, 32))
+			bgRect.CornerRadius = 6
+			bgRect.StrokeWidth = 1
+			bgRect.StrokeColor = parseHexColor(DefaultTagColor)
+
+			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 16)
 			nameLbl := widget.NewLabelWithStyle("#Tên thẻ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			hexLbl := widget.NewLabelWithStyle("#3498db", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+
+			editBtn := widget.NewButtonWithIcon("Chỉnh sửa thẻ", theme.DocumentCreateIcon(), nil)
+			editBtn.Importance = widget.LowImportance
+
 			delBtn := widget.NewButtonWithIcon("Xóa thẻ", theme.DeleteIcon(), nil)
 			delBtn.Importance = widget.DangerImportance
-			return container.NewBorder(nil, nil, nil, delBtn, nameLbl)
+
+			leftInfo := container.NewHBox(container.NewCenter(dotWrap), nameLbl, hexLbl)
+			rightActions := container.NewHBox(editBtn, delBtn)
+			rowContent := container.NewBorder(nil, nil, nil, rightActions, leftInfo)
+
+			return container.NewMax(bgRect, container.NewPadded(rowContent))
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
 			if i < 0 || i >= len(h.tags) {
 				return
 			}
 			tag := h.tags[i]
-			box := obj.(*fyne.Container)
-			for _, child := range box.Objects {
-				switch w := child.(type) {
-				case *widget.Label:
-					w.SetText(fmt.Sprintf("🏷️ #%s  (ID: %d)", tag.Name, tag.ID))
-				case *widget.Button:
-					tagID := tag.ID
-					w.OnTapped = func() {
-						_ = h.store.DeleteTag(tagID)
-						h.reloadAllData()
-						if h.onUpdated != nil {
-							h.onUpdated()
+			tagColor := NormalizeHexColor(tag.Color)
+
+			maxBox := obj.(*fyne.Container)
+			if bgRect, ok := maxBox.Objects[0].(*canvas.Rectangle); ok {
+				bgRect.FillColor = parseHexTintColor(tagColor, 30)
+				bgRect.StrokeColor = parseHexColor(tagColor)
+				bgRect.Refresh()
+			}
+
+			paddedBox := maxBox.Objects[1].(*fyne.Container)
+			borderBox := paddedBox.Objects[0].(*fyne.Container)
+
+			for _, child := range borderBox.Objects {
+				hbox, ok := child.(*fyne.Container)
+				if !ok {
+					continue
+				}
+				if len(hbox.Objects) == 3 {
+					// leftInfo: [center(dotWrap), nameLbl, hexLbl]
+					if centerWrap, ok := hbox.Objects[0].(*fyne.Container); ok && len(centerWrap.Objects) > 0 {
+						if gridWrap, ok := centerWrap.Objects[0].(*fyne.Container); ok && len(gridWrap.Objects) > 0 {
+							if circle, ok := gridWrap.Objects[0].(*canvas.Circle); ok {
+								circle.FillColor = parseHexColor(tagColor)
+								circle.Refresh()
+							}
+						}
+					}
+					if nameLbl, ok := hbox.Objects[1].(*widget.Label); ok {
+						nameLbl.SetText(fmt.Sprintf("#%s", tag.Name))
+					}
+					if hexLbl, ok := hbox.Objects[2].(*widget.Label); ok {
+						hexLbl.SetText(fmt.Sprintf("(%s)", tagColor))
+					}
+				} else if len(hbox.Objects) == 2 {
+					// rightActions: [editBtn, delBtn]
+					currentTag := tag
+					if editBtn, ok := hbox.Objects[0].(*widget.Button); ok {
+						editBtn.OnTapped = func() {
+							h.showEditTagDialog(currentTag)
+						}
+					}
+					if delBtn, ok := hbox.Objects[1].(*widget.Button); ok {
+						delBtn.OnTapped = func() {
+							_ = h.store.DeleteTag(currentTag.ID)
+							if h.selectedTagID == currentTag.ID {
+								h.clearTagForm()
+							}
+							h.reloadAllData()
+							if h.onUpdated != nil {
+								h.onUpdated()
+							}
 						}
 					}
 				}
@@ -775,14 +1058,156 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		},
 	)
 
-	info := widget.NewLabel("Danh sách toàn bộ các Thẻ (Tags) của tác phẩm. Bạn có thể gắn các thẻ này cho Nhân vật, Địa điểm, Vật phẩm và Sự kiện để lọc nhanh theo chủ đề (VD: 'Thiên giới', 'Khu vực cấm', 'Cổ vật').")
+	h.tagList.OnSelected = func(id widget.ListItemID) {
+		if id < 0 || id >= len(h.tags) {
+			return
+		}
+		t := h.tags[id]
+		h.selectedTagID = t.ID
+		h.tagFormNameEntry.SetText(t.Name)
+		h.tagFormHexEntry.SetText(NormalizeHexColor(t.Color))
+		if lbl, ok := hexToLabel[strings.ToLower(NormalizeHexColor(t.Color))]; ok {
+			h.tagFormPresetSelect.SetSelected(lbl)
+		}
+		updateLiveTagPreview()
+	}
+
+	resetBtn := widget.NewButtonWithIcon("Thêm thẻ mới (Làm trống)", theme.DocumentCreateIcon(), func() {
+		h.clearTagForm()
+		updateLiveTagPreview()
+	})
+
+	saveTagBtn := widget.NewButtonWithIcon("Lưu thẻ", theme.DocumentSaveIcon(), func() {
+		name := strings.TrimSpace(h.tagFormNameEntry.Text)
+		if name == "" {
+			return
+		}
+		hexColor := NormalizeHexColor(h.tagFormHexEntry.Text)
+		if h.selectedTagID == 0 {
+			created, err := h.store.CreateTag(h.bookID, name, hexColor)
+			if err != nil {
+				dialog.ShowError(err, h.parentWin)
+				return
+			}
+			h.selectedTagID = created.ID
+		} else {
+			if err := h.store.UpdateTag(h.selectedTagID, name, hexColor); err != nil {
+				dialog.ShowError(err, h.parentWin)
+				return
+			}
+		}
+		h.reloadAllData()
+		if h.onUpdated != nil {
+			h.onUpdated()
+		}
+	})
+	saveTagBtn.Importance = widget.HighImportance
+
+	delTagBtn := widget.NewButtonWithIcon("Xóa thẻ đang chọn", theme.DeleteIcon(), func() {
+		if h.selectedTagID == 0 {
+			return
+		}
+		_ = h.store.DeleteTag(h.selectedTagID)
+		h.clearTagForm()
+		updateLiveTagPreview()
+		h.reloadAllData()
+		if h.onUpdated != nil {
+			h.onUpdated()
+		}
+	})
+	delTagBtn.Importance = widget.DangerImportance
+
+	info := widget.NewLabel("Danh sách các Thẻ phân loại (Tags) kèm Màu sắc thẻ. Nhấp vào một thẻ để chỉnh sửa tên/màu sắc hoặc nhấn 'Chỉnh sửa thẻ'.")
 	info.Wrapping = fyne.TextWrapWord
 
-	return container.NewBorder(
+	leftPane := container.NewBorder(
 		container.NewVBox(info, widget.NewSeparator()),
 		nil, nil, nil,
 		h.tagList,
 	)
+
+	rightForm := container.NewVScroll(container.NewVBox(
+		widget.NewLabelWithStyle("THÊM THẺ MỚI / CHỈNH SỬA THẺ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewForm(
+			widget.NewFormItem("Tên thẻ", h.tagFormNameEntry),
+			widget.NewFormItem("Màu sắc thẻ (Gợi ý)", h.tagFormPresetSelect),
+			widget.NewFormItem("Mã màu Hex", h.tagFormHexEntry),
+			widget.NewFormItem("Xem trước huy hiệu", previewBadge),
+		),
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("BẢNG CHỌN MÀU NHANH", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		paletteGrid,
+		widget.NewSeparator(),
+		container.NewHBox(resetBtn, layout.NewSpacer(), delTagBtn, saveTagBtn),
+	))
+
+	split := container.NewHSplit(leftPane, rightForm)
+	split.Offset = 0.48
+	return split
+}
+
+func (h *WorldBuildingHub) clearTagForm() {
+	h.selectedTagID = 0
+	if h.tagList != nil {
+		h.tagList.UnselectAll()
+	}
+	if h.tagFormNameEntry != nil {
+		h.tagFormNameEntry.SetText("")
+	}
+	if h.tagFormHexEntry != nil {
+		h.tagFormHexEntry.SetText(DefaultTagColor)
+	}
+}
+
+// showEditTagDialog hiển thị hộp thoại chỉnh sửa nhanh tên và màu sắc của một Thẻ.
+func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
+	nameEntry := NewVietEntry()
+	nameEntry.SetText(tag.Name)
+
+	hexEntry := NewVietEntry()
+	hexEntry.SetText(NormalizeHexColor(tag.Color))
+
+	dotCircle, dotWrap := newColorCircleIndicator(tag.Color, 20)
+
+	presets := DefaultTagColorPresets()
+	presetLabels := make([]string, len(presets))
+	labelToHex := make(map[string]string, len(presets))
+	for i, p := range presets {
+		presetLabels[i] = p.Label
+		labelToHex[p.Label] = p.Hex
+	}
+
+	colorSelect := widget.NewSelect(presetLabels, func(selected string) {
+		if hex, ok := labelToHex[selected]; ok {
+			hexEntry.SetText(hex)
+			dotCircle.FillColor = parseHexColor(hex)
+			dotCircle.Refresh()
+		}
+	})
+	hexEntry.SetOnChangedCallback(func(val string) {
+		dotCircle.FillColor = parseHexColor(val)
+		dotCircle.Refresh()
+	})
+
+	hexRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, hexEntry)
+
+	dialog.ShowForm("Chỉnh sửa thẻ", "Lưu thay đổi", "Hủy", []*widget.FormItem{
+		widget.NewFormItem("Tên thẻ", nameEntry),
+		widget.NewFormItem("Chọn màu", colorSelect),
+		widget.NewFormItem("Màu sắc thẻ (Hex)", hexRow),
+	}, func(confirmed bool) {
+		if !confirmed || strings.TrimSpace(nameEntry.Text) == "" {
+			return
+		}
+		if err := h.store.UpdateTag(tag.ID, nameEntry.Text, hexEntry.Text); err != nil {
+			dialog.ShowError(err, h.parentWin)
+			return
+		}
+		h.reloadAllData()
+		if h.onUpdated != nil {
+			h.onUpdated()
+		}
+	}, h.parentWin)
 }
 
 // ==================== NẠP DỮ LIỆU & ÁP DỤNG BỘ LỌC THẺ ====================
