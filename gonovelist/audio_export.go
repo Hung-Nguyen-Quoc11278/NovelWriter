@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -376,42 +377,39 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 		go func() {
 			err := ExportTextToAudioWithEdgeTTS(voiceChosen, textToRead, outPath)
 
-			// Cập nhật giao diện trên Main Thread của Fyne
-			fyne.Do(func() {
-				exportBtn.Enable()
-				cancelBtn.Enable()
-				progressBar.Hide()
+			exportBtn.Enable()
+			cancelBtn.Enable()
+			progressBar.Hide()
 
-				if err != nil {
-					statusLabel.SetText("❌ Có lỗi xảy ra khi tạo audio.")
-					dialog.ShowError(err, ui.window)
-					return
-				}
+			if err != nil {
+				statusLabel.SetText("❌ Có lỗi xảy ra khi tạo audio.")
+				dialog.ShowError(err, ui.window)
+				return
+			}
 
-				PlayUIClickSound()
-				statusLabel.SetText("✅ Xuất audio thành công!")
+			PlayUIClickSound()
+			statusLabel.SetText("✅ Xuất audio thành công!")
 
-				fi, _ := os.Stat(outPath)
-				fileSizeMB := float64(0)
-				if fi != nil {
-					fileSizeMB = float64(fi.Size()) / (1024 * 1024)
-				}
+			fi, _ := os.Stat(outPath)
+			fileSizeMB := float64(0)
+			if fi != nil {
+				fileSizeMB = float64(fi.Size()) / (1024 * 1024)
+			}
 
-				if ui.statusFooter != nil {
-					ui.statusFooter.SetText(fmt.Sprintf("Đã xuất audio: %s (%.2f MB)", filepath.Base(outPath), fileSizeMB))
-				}
+			if ui.statusFooter != nil {
+				ui.statusFooter.SetText(fmt.Sprintf("Đã xuất audio: %s (%.2f MB)", filepath.Base(outPath), fileSizeMB))
+			}
 
-				dialog.ShowInformation(
-					"Xuất Audio Thành Công!",
-					fmt.Sprintf("Đã xuất file âm thanh thành công!\n\n• Tệp đích: %s\n• Giọng đọc: %s\n• Dung lượng: %.2f MB\n• Số từ: %d từ",
-						outPath,
-						voiceSelect.Selected,
-						fileSizeMB,
-						len(strings.Fields(textToRead)),
-					),
-					ui.window,
-				)
-			})
+			dialog.ShowInformation(
+				"Xuất Audio Thành Công!",
+				fmt.Sprintf("Đã xuất file âm thanh thành công!\n\n• Tệp đích: %s\n• Giọng đọc: %s\n• Dung lượng: %.2f MB\n• Số từ: %d từ",
+					outPath,
+					voiceSelect.Selected,
+					fileSizeMB,
+					len(strings.Fields(textToRead)),
+				),
+				ui.window,
+			)
 		}()
 	}
 
