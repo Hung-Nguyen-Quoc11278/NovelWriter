@@ -424,6 +424,7 @@ func (c *ColoredTagCheckbox) CreateRenderer() fyne.WidgetRenderer {
 }
 
 func (r *coloredTagCheckboxRenderer) Layout(size fyne.Size) {
+	r.container.Move(fyne.NewPos(0, 0))
 	r.container.Resize(size)
 }
 
@@ -477,9 +478,9 @@ func (r *coloredTagCheckboxRenderer) Refresh() {
 }
 
 // ColoredTagCheckGroup quản lý danh sách các ô chọn Thẻ có màu sắc động,
-// cung cấp API tương thích với CheckGroup (Options, Selected, SetOptions, SetSelected, SetTags).
+// cung cấp API tương thích với CheckGroup (Options, Selected, SetOptions, SetSelected, SetTags, Container).
 type ColoredTagCheckGroup struct {
-	*fyne.Container
+	container *fyne.Container
 	Options   []string
 	tags      []Tag
 	tagMap    map[string]Tag
@@ -494,9 +495,21 @@ func NewColoredTagCheckGroup(onChanged func(selected []string)) *ColoredTagCheck
 		OnChanged: onChanged,
 		tagMap:    make(map[string]Tag),
 	}
-	emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút '+ Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
-	g.Container = container.NewVBox(emptyLbl)
+	emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút 'Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+	g.container = container.NewVBox(emptyLbl)
 	return g
+}
+
+// Container trả về đối tượng *fyne.Container chứa các ô chọn thẻ để đưa vào cây giao diện Fyne.
+func (g *ColoredTagCheckGroup) Container() *fyne.Container {
+	return g.container
+}
+
+// Refresh làm mới container hiển thị các ô chọn thẻ.
+func (g *ColoredTagCheckGroup) Refresh() {
+	if g.container != nil {
+		g.container.Refresh()
+	}
 }
 
 // SetOptions thiết lập danh sách tên thẻ theo danh mục (category-specific tag names) kèm danh sách Thẻ,
@@ -530,16 +543,19 @@ func (g *ColoredTagCheckGroup) SetSelected(selected []string) {
 	for _, item := range g.items {
 		item.SetChecked(selectedMap[item.Tag.Name])
 	}
+	if g.container != nil {
+		g.container.Refresh()
+	}
 }
 
 func (g *ColoredTagCheckGroup) rebuild() {
 	g.items = nil
-	g.Container.Objects = nil
+	g.container.Objects = nil
 
 	if len(g.Options) == 0 {
-		emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút '+ Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
-		g.Container.Add(emptyLbl)
-		g.Container.Refresh()
+		emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút 'Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+		g.container.Add(emptyLbl)
+		g.container.Refresh()
 		return
 	}
 
@@ -559,10 +575,10 @@ func (g *ColoredTagCheckGroup) rebuild() {
 			g.updateSelection(tagName, checked)
 		})
 		g.items = append(g.items, chk)
-		g.Container.Add(chk)
+		g.container.Add(chk)
 	}
 
-	g.Container.Refresh()
+	g.container.Refresh()
 }
 
 func (g *ColoredTagCheckGroup) updateSelection(name string, checked bool) {
@@ -912,7 +928,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		}
 	}
 
-	addCharTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Nhân Vật", theme.ContentAddIcon(), func() {
+	addCharTagBtn := widget.NewButtonWithIcon("Thêm Thẻ...", theme.ContentAddIcon(), func() {
 		h.showCreateScopedTagDialog(EntityCharacter, h.charTagCheck)
 	})
 	addCharTagBtn.Importance = widget.LowImportance
@@ -998,7 +1014,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		),
 		widget.NewSeparator(),
 		tagSectionHeader,
-		h.charTagCheck,
+		h.charTagCheck.Container(),
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
 	)
@@ -1091,7 +1107,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		}
 	}
 
-	addLocTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Địa Điểm", theme.ContentAddIcon(), func() {
+	addLocTagBtn := widget.NewButtonWithIcon("Thêm Thẻ...", theme.ContentAddIcon(), func() {
 		h.showCreateScopedTagDialog(EntityLocation, h.locTagCheck)
 	})
 	addLocTagBtn.Importance = widget.LowImportance
@@ -1171,7 +1187,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		),
 		widget.NewSeparator(),
 		tagSectionHeader,
-		h.locTagCheck,
+		h.locTagCheck.Container(),
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
 	)
@@ -1272,7 +1288,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		}
 	}
 
-	addPropTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Vật Phẩm", theme.ContentAddIcon(), func() {
+	addPropTagBtn := widget.NewButtonWithIcon("Thêm Thẻ...", theme.ContentAddIcon(), func() {
 		h.showCreateScopedTagDialog(EntityProp, h.propTagCheck)
 	})
 	addPropTagBtn.Importance = widget.LowImportance
@@ -1360,7 +1376,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		),
 		widget.NewSeparator(),
 		tagSectionHeader,
-		h.propTagCheck,
+		h.propTagCheck.Container(),
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
 	)
@@ -1459,7 +1475,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		}
 	}
 
-	addEventTagBtn := widget.NewButtonWithIcon("+ Thêm Thẻ Sự Kiện", theme.ContentAddIcon(), func() {
+	addEventTagBtn := widget.NewButtonWithIcon("Thêm Thẻ...", theme.ContentAddIcon(), func() {
 		h.showCreateScopedTagDialog(EntityEvent, h.eventTagCheck)
 	})
 	addEventTagBtn.Importance = widget.LowImportance
@@ -1546,7 +1562,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		),
 		widget.NewSeparator(),
 		tagSectionHeader,
-		h.eventTagCheck,
+		h.eventTagCheck.Container(),
 		widget.NewSeparator(),
 		container.NewHBox(newBtn, layout.NewSpacer(), delBtn, saveBtn),
 	)
