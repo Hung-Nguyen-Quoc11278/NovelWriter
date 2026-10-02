@@ -53,6 +53,14 @@ type EditorPanel struct {
 	inspectorTabs   *container.AppTabs
 	splitContainer  *container.Split
 
+	// Các vùng chứa bố cục để đồng bộ kích thước tức thì khi phóng to cửa sổ (Maximize / Scale)
+	headerForm      *fyne.Container
+	footerStats     *fyne.Container
+	centerEditor    *fyne.Container
+	contextVBox     *fyne.Container
+	contextScroll   *container.Scroll
+	notesTabContent *fyne.Container
+
 	// Bộ nhớ đệm danh sách thực thể của tác phẩm hiện tại
 	characters []Character
 	locations  []Location
@@ -167,19 +175,29 @@ func (ep *EditorPanel) buildUI() {
 		ep.scheduleAutoSave()
 	})
 
-	// Bố cục khu vực soạn thảo trung tâm kèm thanh công cụ thu phóng cỡ chữ (Zoom)
-	headerForm := container.NewVBox(
-		container.NewBorder(
-			nil, nil,
-			widget.NewLabelWithStyle("Cảnh:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			container.NewHBox(widget.NewLabel("Mục tiêu từ:"), ep.targetWordsEntry, zoomControlsBox),
-			ep.titleEntry,
-		),
+	// Bố cục khu vực soạn thảo trung tâm (tách dòng tiêu đề và thanh công cụ Zoom để giảm MinSize ngang,
+	// giúp thanh Ngữ cảnh Cảnh bên phải không bao giờ bị đẩy tràn khỏi màn hình khi phóng to chữ hoặc cửa sổ)
+	titleRow := container.NewBorder(
+		nil, nil,
+		widget.NewLabelWithStyle("Cảnh:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewHBox(widget.NewLabel("Mục tiêu từ:"), ep.targetWordsEntry),
+		ep.titleEntry,
+	)
+
+	summaryAndZoomRow := container.NewBorder(
+		nil, nil,
+		nil,
+		zoomControlsBox,
 		ep.summaryEntry,
+	)
+
+	ep.headerForm = container.NewVBox(
+		titleRow,
+		summaryAndZoomRow,
 		widget.NewSeparator(),
 	)
 
-	footerStats := container.NewVBox(
+	ep.footerStats = container.NewVBox(
 		widget.NewSeparator(),
 		container.NewGridWithColumns(2,
 			container.NewBorder(nil, nil, ep.sceneWordLabel, nil, ep.sceneProgress),
@@ -192,7 +210,7 @@ func (ep *EditorPanel) buildUI() {
 		),
 	)
 
-	centerEditor := container.NewBorder(headerForm, footerStats, nil, nil, ep.proseEntry)
+	ep.centerEditor = container.NewBorder(ep.headerForm, ep.footerStats, nil, nil, ep.proseEntry)
 
 	// Bố cục thanh bên phải: Tab "Ngữ cảnh Cảnh" (Mở rộng với Nhân vật, Vật phẩm & Sự kiện)
 	openHubBtn := widget.NewButton("⚙️ Mở Trung Tâm Thế Giới & Thẻ...", func() {
@@ -204,7 +222,7 @@ func (ep *EditorPanel) buildUI() {
 		})
 	})
 
-	contextTabContent := container.NewVScroll(container.NewVBox(
+	ep.contextVBox = container.NewVBox(
 		openHubBtn,
 		widget.NewSeparator(),
 		widget.NewLabelWithStyle("TRẠNG THÁI BIÊN TẬP", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
@@ -224,26 +242,67 @@ func (ep *EditorPanel) buildUI() {
 		widget.NewSeparator(),
 		widget.NewLabelWithStyle("⏳ SỰ KIỆN TRONG CẢNH (EVENTS)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		ep.eventsCheck,
-	))
+	)
+	ep.contextScroll = container.NewVScroll(ep.contextVBox)
 
-	notesTabContent := container.NewBorder(
+	ep.notesTabContent = container.NewBorder(
 		widget.NewLabelWithStyle("GHI CHÚ BÊN LỀ & NHÁP Ý TƯỞNG", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		nil, nil, nil,
 		ep.sideNotesEntry,
 	)
 
 	ep.inspectorTabs = container.NewAppTabs(
-		container.NewTabItem("Ngữ cảnh Cảnh", contextTabContent),
-		container.NewTabItem("Ghi chú bên lề", notesTabContent),
+		container.NewTabItem("Ngữ cảnh Cảnh", ep.contextScroll),
+		container.NewTabItem("Ghi chú bên lề", ep.notesTabContent),
 	)
 
-	ep.splitContainer = container.NewHSplit(centerEditor, ep.inspectorTabs)
+	ep.splitContainer = container.NewHSplit(ep.centerEditor, ep.inspectorTabs)
 	ep.splitContainer.Offset = 0.68
 }
 
 // Container trả về đối tượng CanvasObject gốc của khung soạn thảo.
 func (ep *EditorPanel) Container() fyne.CanvasObject {
 	return ep.splitContainer
+}
+
+// ForceLayoutRefresh buộc thanh chia HSplit, trình soạn thảo trung tâm và thanh bên Ngữ cảnh Cảnh
+// tính toán lại ranh giới (bounds) và làm mới bố cục ngay khi cửa sổ chính được phóng to (Maximize) hoặc đổi tỷ lệ.
+func (ep *EditorPanel) ForceLayoutRefresh() {
+	if ep.splitContainer == nil {
+		return
+	}
+
+	savedRow, savedCol := 0, 0
+	if ep.proseEntry != nil {
+		savedRow, savedCol = ep.proseEntry.GetLockedCursor()
+	}
+
+	if ep.headerForm != nil {
+		ep.headerForm.Refresh()
+	}
+	if ep.footerStats != nil {
+		ep.footerStats.Refresh()
+	}
+	if ep.centerEditor != nil {
+		ep.centerEditor.Refresh()
+	}
+	if ep.contextVBox != nil {
+		ep.contextVBox.Refresh()
+	}
+	if ep.contextScroll != nil {
+		ep.contextScroll.Refresh()
+	}
+	if ep.notesTabContent != nil {
+		ep.notesTabContent.Refresh()
+	}
+	if ep.inspectorTabs != nil {
+		ep.inspectorTabs.Refresh()
+	}
+	ep.splitContainer.Refresh()
+
+	if ep.proseEntry != nil {
+		ep.proseEntry.RestoreLockedCursor(savedRow, savedCol)
+	}
 }
 
 // BindZoomHandlers kết nối các nút phóng to / thu nhỏ cỡ chữ trên thanh công cụ với bộ quản lý Theme.

@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -11,6 +13,83 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
+
+// ResponsiveWindowLayout là bộ quản lý bố cục gốc (fyne.Layout) tự động bắt sự kiện thay đổi
+// kích thước cửa sổ, phóng to toàn màn hình (Maximize), khôi phục (Restore) hoặc đổi tỷ lệ màn hình (Scale).
+// Khi cửa sổ thay đổi kích thước đột ngột (như nhấn nút Maximize trên Linux X11/Wayland),
+// nó buộc toàn bộ các container con và các thanh chia HSplit lồng nhau tính toán lại ranh giới ngay lập tức.
+type ResponsiveWindowLayout struct {
+	mu          sync.Mutex
+	lastSize    fyne.Size
+	onResized   func(newSize fyne.Size)
+	settleTimer *time.Timer
+}
+
+// NewResponsiveWindowLayout khởi tạo bộ lắng nghe thay đổi kích thước cửa sổ thông qua cơ chế Layout của Fyne.
+func NewResponsiveWindowLayout(onResized func(newSize fyne.Size)) *ResponsiveWindowLayout {
+	return &ResponsiveWindowLayout{
+		onResized: onResized,
+	}
+}
+
+// Layout được Fyne tự động gọi mỗi khi khung vẽ (Canvas) của cửa sổ chính thay đổi kích thước hoặc phóng to.
+func (l *ResponsiveWindowLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	for _, obj := range objects {
+		if obj == nil || !obj.Visible() {
+			continue
+		}
+		obj.Move(fyne.NewPos(0, 0))
+		obj.Resize(size)
+	}
+
+	if size.Width <= 0 || size.Height <= 0 {
+		return
+	}
+
+	l.mu.Lock()
+	changed := size.Width != l.lastSize.Width || size.Height != l.lastSize.Height
+	if !changed {
+		l.mu.Unlock()
+		return
+	}
+	l.lastSize = size
+
+	if l.settleTimer != nil {
+		l.settleTimer.Stop()
+	}
+	// Trên Linux (X11/Wayland), sự kiện Maximize đôi khi gửi kích thước khung hình trước khi
+	// viewport OpenGL ổn định hoàn toàn. Hẹn giờ đồng bộ lại sau 45ms giúp thanh bên phải
+	// tự động giãn chuẩn xác mà không cần người dùng kéo tay viền cửa sổ.
+	settledSize := size
+	l.settleTimer = time.AfterFunc(45*time.Millisecond, func() {
+		if l.onResized != nil {
+			l.onResized(settledSize)
+		}
+	})
+	l.mu.Unlock()
+
+	if l.onResized != nil {
+		l.onResized(size)
+	}
+}
+
+// MinSize trả về kích thước tối thiểu hợp lý để không khóa cứng các thanh chia HSplit khi thu phóng.
+func (l *ResponsiveWindowLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	minW, minH := float32(320), float32(240)
+	for _, obj := range objects {
+		if obj == nil || !obj.Visible() {
+			continue
+		}
+		ms := obj.MinSize()
+		if ms.Width > minW {
+			minW = ms.Width
+		}
+		if ms.Height > minH {
+			minH = ms.Height
+		}
+	}
+	return fyne.NewSize(minW, minH)
+}
 
 // NovelistUI điều phối bố cục cửa sổ chính, cây phân cấp Hồi/Chương/Cảnh và Trung tâm Thế giới.
 type NovelistUI struct {
@@ -29,6 +108,7 @@ type NovelistUI struct {
 	tree            *widget.Tree
 	editorPanel     *EditorPanel
 	mainSplit       *container.Split
+	rootContainer   *fyne.Container
 	sidebarBox      *fyne.Container
 	distractionFree bool
 	statusFooter    *widget.Label
@@ -185,7 +265,7 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 	worldHubBtn.Importance = widget.HighImportance
 
 	// Nút mở Hộp thoại Xuất Bản Thảo Đa Định Dạng (TXT, ODT, PDF, EPUB, MD, HTML)
-	exportHubBtn := widget.NewButtonWithIcon("Xuất bản thảo (PDF / EPUB / ODT / TXT)...", theme.DocumentSaveIcon(), func() {
+	exportHubBtn := widget.NewButtonWithIcon("Xuất bản thảo...", theme.DocumentSaveIcon(), func() {
 		ui.ShowExportDialog(ExportFormatPDF)
 	})
 
@@ -331,7 +411,31 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 
 	ui.mainSplit = container.NewHSplit(ui.sidebarBox, ui.editorPanel.Container())
 	ui.mainSplit.Offset = 0.24
-	return ui.mainSplit
+
+	// Bọc mainSplit trong container gốc sử dụng ResponsiveWindowLayout để tự động làm mới
+	// toàn bộ HSplit lồng nhau và thanh bên Ngữ cảnh Cảnh khi cửa sổ Maximize / Restore / Scale.
+	windowLayout := NewResponsiveWindowLayout(func(_ fyne.Size) {
+		ui.ForceLayoutRefresh()
+	})
+	ui.rootContainer = container.New(windowLayout, ui.mainSplit)
+	return ui.rootContainer
+}
+
+// ForceLayoutRefresh buộc toàn bộ cây giao diện (thanh bên trái, HSplit chính, HSplit soạn thảo
+// và thanh bên Ngữ cảnh Cảnh bên phải) tính toán lại kích thước và vẽ lại ngay lập tức.
+func (ui *NovelistUI) ForceLayoutRefresh() {
+	if ui.sidebarBox != nil {
+		ui.sidebarBox.Refresh()
+	}
+	if ui.editorPanel != nil {
+		ui.editorPanel.ForceLayoutRefresh()
+	}
+	if ui.mainSplit != nil {
+		ui.mainSplit.Refresh()
+	}
+	if ui.rootContainer != nil {
+		ui.rootContainer.Refresh()
+	}
 }
 
 func (ui *NovelistUI) reloadProjectSelector(active Project) {
@@ -400,6 +504,7 @@ func (ui *NovelistUI) ApplyFontSize(targetSize float32) {
 			ui.editorPanel.proseEntry.RestoreLockedCursor(savedRow, savedCol)
 		}
 	}
+	ui.ForceLayoutRefresh()
 	if ui.window != nil && ui.window.Content() != nil {
 		ui.window.Content().Refresh()
 	}
