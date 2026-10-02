@@ -1,14 +1,22 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
@@ -137,9 +145,388 @@ func CleanProseForSpeech(raw string) string {
 	return strings.TrimSpace(text)
 }
 
-// ExportTextToAudioWithEdgeTTS chạy tiện ích dòng lệnh edge-tts để tạo tệp âm thanh MP3.
-// Cú pháp: edge-tts --voice <selected_voice> --text "<content>" --write-media <output_path.mp3>
-func ExportTextToAudioWithEdgeTTS(voiceID, textContent, outputPath string) error {
+// ==================== PURE GO EDGE-TTS WEBSOCKET CLIENT ====================
+
+const (
+	edgeTTSHost      = "speech.platform.bing.com"
+	edgeTTSPort      = "443"
+	edgeTTSToken     = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
+	edgeTTSUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+	edgeTTSOrigin    = "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold"
+
+	// Các mã Opcode WebSocket chuẩn theo RFC 6455
+	wsOpcodeContinuation byte = 0x0
+	wsOpcodeText         byte = 0x1
+	wsOpcodeBinary       byte = 0x2
+	wsOpcodeClose        byte = 0x8
+	wsOpcodePing         byte = 0x9
+	wsOpcodePong         byte = 0xA
+)
+
+func writeWSFrame(conn net.Conn, opcode byte, payload []byte) error {
+	var header []byte
+	b0 := byte(0x80) | (opcode & 0x0F) // FIN = 1
+	n := len(payload)
+	if n <= 125 {
+		header = []byte{b0, 0x80 | byte(n)}
+	} else if n <= 65535 {
+		header = make([]byte, 4)
+		header[0] = b0
+		header[1] = 0x80 | 126
+		binary.BigEndian.PutUint16(header[2:4], uint16(n))
+	} else {
+		header = make([]byte, 10)
+		header[0] = b0
+		header[1] = 0x80 | 127
+		binary.BigEndian.PutUint64(header[2:10], uint64(n))
+	}
+
+	var mask [4]byte
+	if _, err := rand.Read(mask[:]); err != nil {
+		return fmt.Errorf("lỗi sinh khóa ngẫu nhiên che dữ liệu WebSocket: %w", err)
+	}
+	header = append(header, mask[:]...)
+
+	maskedPayload := make([]byte, n)
+	for i := 0; i < n; i++ {
+		maskedPayload[i] = payload[i] ^ mask[i%4]
+	}
+
+	if _, err := conn.Write(header); err != nil {
+		return err
+	}
+	if n > 0 {
+		_, err := conn.Write(maskedPayload)
+		return err
+	}
+	return nil
+}
+
+func readWSFrame(reader *bufio.Reader) (byte, []byte, error) {
+	b0, err := reader.ReadByte()
+	if err != nil {
+		return 0, nil, err
+	}
+	opcode := b0 & 0x0F
+
+	b1, err := reader.ReadByte()
+	if err != nil {
+		return 0, nil, err
+	}
+	isMasked := (b1 & 0x80) != 0
+	len7 := int(b1 & 0x7F)
+
+	var payloadLen uint64
+	if len7 <= 125 {
+		payloadLen = uint64(len7)
+	} else if len7 == 126 {
+		var l uint16
+		if err := binary.Read(reader, binary.BigEndian, &l); err != nil {
+			return 0, nil, err
+		}
+		payloadLen = uint64(l)
+	} else if len7 == 127 {
+		var l uint64
+		if err := binary.Read(reader, binary.BigEndian, &l); err != nil {
+			return 0, nil, err
+		}
+		payloadLen = l
+	}
+
+	// Giới hạn an toàn chống tràn bộ nhớ với gói tin lỗi
+	if payloadLen > 10*1024*1024 {
+		return 0, nil, fmt.Errorf("kích thước khung dữ liệu WebSocket vượt quá 10MB: %d bytes", payloadLen)
+	}
+
+	var mask [4]byte
+	if isMasked {
+		if _, err := io.ReadFull(reader, mask[:]); err != nil {
+			return 0, nil, err
+		}
+	}
+
+	payload := make([]byte, payloadLen)
+	if payloadLen > 0 {
+		if _, err := io.ReadFull(reader, payload); err != nil {
+			return 0, nil, err
+		}
+		if isMasked {
+			for i := 0; i < int(payloadLen); i++ {
+				payload[i] ^= mask[i%4]
+			}
+		}
+	}
+
+	return opcode, payload, nil
+}
+
+func sendWSClose(conn net.Conn) error {
+	// Gửi mã đóng 1000 (Normal Closure)
+	payload := []byte{0x03, 0xE8}
+	return writeWSFrame(conn, wsOpcodeClose, payload)
+}
+
+func xmlEscape(s string) string {
+	var buf strings.Builder
+	for _, r := range s {
+		switch r {
+		case '&':
+			buf.WriteString("&amp;")
+		case '<':
+			buf.WriteString("&lt;")
+		case '>':
+			buf.WriteString("&gt;")
+		case '"':
+			buf.WriteString("&quot;")
+		case '\'':
+			buf.WriteString("&apos;")
+		default:
+			buf.WriteRune(r)
+		}
+	}
+	return buf.String()
+}
+
+func randomHex(byteLen int) string {
+	b := make([]byte, byteLen)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%032x", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+func edgeTimestamp() string {
+	return time.Now().UTC().Format("Mon Jan 02 2006 15:04:05") + " GMT+0000 (Coordinated Universal Time)"
+}
+
+// SplitTextIntoTTSChunks phân đoạn văn bản theo ranh giới câu và đoạn văn để tránh vượt giới hạn kích thước SSML của Edge-TTS.
+func SplitTextIntoTTSChunks(text string, maxRunes int) []string {
+	if maxRunes <= 0 {
+		maxRunes = 2500
+	}
+	clean := strings.TrimSpace(text)
+	if clean == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(clean) <= maxRunes {
+		return []string{clean}
+	}
+
+	paragraphs := strings.Split(clean, "\n")
+	var chunks []string
+	var currentChunk strings.Builder
+
+	for _, p := range paragraphs {
+		trimmedP := strings.TrimSpace(p)
+		if trimmedP == "" {
+			continue
+		}
+
+		pRunes := utf8.RuneCountInString(trimmedP)
+		curRunes := utf8.RuneCountInString(currentChunk.String())
+
+		if pRunes > maxRunes {
+			sentences := splitParagraphIntoSentences(trimmedP)
+			for _, s := range sentences {
+				sRunes := utf8.RuneCountInString(s)
+				if curRunes+sRunes+1 > maxRunes && curRunes > 0 {
+					chunks = append(chunks, strings.TrimSpace(currentChunk.String()))
+					currentChunk.Reset()
+					curRunes = 0
+				}
+				if currentChunk.Len() > 0 {
+					currentChunk.WriteString(" ")
+				}
+				currentChunk.WriteString(s)
+				curRunes += sRunes + 1
+			}
+			continue
+		}
+
+		if curRunes+pRunes+2 > maxRunes && curRunes > 0 {
+			chunks = append(chunks, strings.TrimSpace(currentChunk.String()))
+			currentChunk.Reset()
+		}
+
+		if currentChunk.Len() > 0 {
+			currentChunk.WriteString("\n\n")
+		}
+		currentChunk.WriteString(trimmedP)
+	}
+
+	if currentChunk.Len() > 0 {
+		trimmed := strings.TrimSpace(currentChunk.String())
+		if trimmed != "" {
+			chunks = append(chunks, trimmed)
+		}
+	}
+
+	return chunks
+}
+
+func splitParagraphIntoSentences(p string) []string {
+	re := regexp.MustCompile(`[^.!?…]+[.!?…]*`)
+	matches := re.FindAllString(p, -1)
+	if len(matches) == 0 {
+		return []string{p}
+	}
+	var res []string
+	for _, m := range matches {
+		t := strings.TrimSpace(m)
+		if t != "" {
+			res = append(res, t)
+		}
+	}
+	return res
+}
+
+// SynthesizeSpeechChunk gửi một phân đoạn văn bản qua WebSocket Edge-TTS và trả về mảng byte MP3 hoàn chỉnh.
+func SynthesizeSpeechChunk(voiceID, chunkText string) ([]byte, error) {
+	if strings.TrimSpace(chunkText) == "" {
+		return nil, nil
+	}
+	if voiceID == "" {
+		voiceID = "vi-VN-HoaiMyNeural"
+	}
+
+	connID := randomHex(16)
+	reqPath := fmt.Sprintf("/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=%s&ConnectionId=%s", edgeTTSToken, connID)
+
+	dialer := &net.Dialer{
+		Timeout: 15 * time.Second,
+	}
+	tlsConfig := &tls.Config{
+		ServerName: edgeTTSHost,
+	}
+
+	rawConn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(edgeTTSHost, edgeTTSPort), tlsConfig)
+	if err != nil {
+		return nil, fmt.Errorf("lỗi kết nối mạng: không thể thiết lập kết nối an toàn TLS tới máy chủ Edge-TTS: %w", err)
+	}
+	defer rawConn.Close()
+
+	keyBytes := make([]byte, 16)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return nil, fmt.Errorf("lỗi sinh khóa ngẫu nhiên Sec-WebSocket-Key: %w", err)
+	}
+	secKey := base64.StdEncoding.EncodeToString(keyBytes)
+
+	reqStr := fmt.Sprintf(
+		"GET %s HTTP/1.1\r\n"+
+			"Host: %s\r\n"+
+			"Upgrade: websocket\r\n"+
+			"Connection: Upgrade\r\n"+
+			"Sec-WebSocket-Key: %s\r\n"+
+			"Sec-WebSocket-Version: 13\r\n"+
+			"Origin: %s\r\n"+
+			"Pragma: no-cache\r\n"+
+			"Cache-Control: no-cache\r\n"+
+			"User-Agent: %s\r\n"+
+			"Accept-Encoding: gzip, deflate, br, zstd\r\n"+
+			"Accept-Language: vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7\r\n\r\n",
+		reqPath, edgeTTSHost, secKey, edgeTTSOrigin, edgeTTSUserAgent,
+	)
+
+	_ = rawConn.SetDeadline(time.Now().Add(15 * time.Second))
+	if _, err := rawConn.Write([]byte(reqStr)); err != nil {
+		return nil, fmt.Errorf("lỗi gửi bản tin bắt tay WebSocket: %w", err)
+	}
+
+	reader := bufio.NewReader(rawConn)
+	u, _ := url.Parse(reqPath)
+	resp, err := http.ReadResponse(reader, &http.Request{Method: "GET", URL: u})
+	if err != nil {
+		return nil, fmt.Errorf("lỗi đọc phản hồi bắt tay từ máy chủ giọng đọc Edge-TTS: %w", err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		return nil, fmt.Errorf("máy chủ Edge-TTS từ chối kết nối WebSocket (Mã lỗi HTTP %d %s)", resp.StatusCode, resp.Status)
+	}
+
+	// 1. Gửi cấu hình giọng đọc (speech.config)
+	configMsg := fmt.Sprintf(
+		"X-Timestamp:%s\r\n"+
+			"Content-Type:application/json; charset=utf-8\r\n"+
+			"Path:speech.config\r\n\r\n"+
+			`{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`,
+		edgeTimestamp(),
+	)
+	if err := writeWSFrame(rawConn, wsOpcodeText, []byte(configMsg)); err != nil {
+		return nil, fmt.Errorf("lỗi gửi bản tin cấu hình giọng đọc Edge-TTS: %w", err)
+	}
+
+	// 2. Gửi văn bản SSML
+	reqID := randomHex(16)
+	ssmlPayload := fmt.Sprintf(
+		"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='vi-VN'>"+
+			"<voice name='%s'>"+
+			"<prosody pitch='+0Hz' rate='+0%%' volume='+0%%'>%s</prosody>"+
+			"</voice></speak>",
+		xmlEscape(voiceID),
+		xmlEscape(chunkText),
+	)
+	ssmlMsg := fmt.Sprintf(
+		"X-RequestId:%s\r\n"+
+			"Content-Type:application/ssml+xml\r\n"+
+			"X-Timestamp:%s\r\n"+
+			"Path:ssml\r\n\r\n"+
+			"%s",
+		reqID,
+		edgeTimestamp(),
+		ssmlPayload,
+	)
+	if err := writeWSFrame(rawConn, wsOpcodeText, []byte(ssmlMsg)); err != nil {
+		return nil, fmt.Errorf("lỗi gửi bản tin SSML tới máy chủ giọng đọc: %w", err)
+	}
+
+	// 3. Lắng nghe và trích xuất các gói dữ liệu MP3 nhị phân
+	var audioBuf bytes.Buffer
+	for {
+		_ = rawConn.SetReadDeadline(time.Now().Add(40 * time.Second))
+		opcode, payload, err := readWSFrame(reader)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				return nil, fmt.Errorf("quá thời gian chờ phản hồi từ máy chủ giọng đọc Edge-TTS (Timeout)")
+			}
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("lỗi khi nhận luồng âm thanh WebSocket: %w", err)
+		}
+
+		switch opcode {
+		case wsOpcodeText:
+			textStr := string(payload)
+			if strings.Contains(textStr, "Path:turn.end") {
+				// Hoàn thành tổng hợp cho phân đoạn này
+				_ = sendWSClose(rawConn)
+				return audioBuf.Bytes(), nil
+			}
+		case wsOpcodeBinary:
+			if len(payload) >= 2 {
+				hLen := int(binary.BigEndian.Uint16(payload[0:2]))
+				if len(payload) > 2+hLen {
+					audioChunk := payload[2+hLen:]
+					audioBuf.Write(audioChunk)
+				}
+			}
+		case wsOpcodePing:
+			_ = writeWSFrame(rawConn, wsOpcodePong, payload)
+		case wsOpcodeClose:
+			_ = sendWSClose(rawConn)
+			return audioBuf.Bytes(), nil
+		}
+	}
+
+	_ = sendWSClose(rawConn)
+	if audioBuf.Len() == 0 {
+		return nil, fmt.Errorf("máy chủ giọng đọc không trả về dữ liệu âm thanh")
+	}
+	return audioBuf.Bytes(), nil
+}
+
+// ExportTextToAudioWithProgress chuyển đổi văn bản sang định dạng âm thanh MP3 thuần túy bằng Go qua WebSocket,
+// hỗ trợ chia nhỏ các đoạn văn dài (chunking) và báo cáo tiến trình liên tục cho giao diện Fyne.
+func ExportTextToAudioWithProgress(voiceID, textContent, outputPath string, onProgress func(current, total int, msg string)) error {
 	cleanText := strings.TrimSpace(textContent)
 	if cleanText == "" {
 		return fmt.Errorf("nội dung văn bản để xuất âm thanh không được để trống")
@@ -160,80 +547,67 @@ func ExportTextToAudioWithEdgeTTS(voiceID, textContent, outputPath string) error
 		_ = os.MkdirAll(outDir, 0755)
 	}
 
-	edgeTTSPath, err := findEdgeTTSExecutable()
+	// Chia văn bản thành các phân đoạn an toàn theo giới hạn ký tự của Edge-TTS (~2500 ký tự)
+	chunks := SplitTextIntoTTSChunks(cleanText, 2500)
+	if len(chunks) == 0 {
+		return fmt.Errorf("không tìm thấy đoạn văn bản hợp lệ để xuất âm thanh")
+	}
+
+	outFile, err := os.Create(outputPath)
 	if err != nil {
-		return fmt.Errorf("không tìm thấy công cụ dòng lệnh 'edge-tts' trên hệ thống.\n\nVui lòng cài đặt bằng lệnh Terminal / CMD:\n  pip install edge-tts\n(và đảm bảo Python Scripts đã có trong PATH)")
+		return fmt.Errorf("không thể tạo tệp âm thanh đích '%s': %w", outputPath, err)
 	}
+	defer outFile.Close()
 
-	// Nếu văn bản dài (> 800 ký tự), lưu vào tệp văn bản tạm thời rồi truyền --file
-	// để tránh lỗi vượt quá giới hạn độ dài tham số dòng lệnh (ARG_MAX) của hệ điều hành.
-	var cmd *exec.Cmd
-	if len(cleanText) > 800 {
-		tmpFile, err := os.CreateTemp("", "gonovelist_tts_*.txt")
-		if err != nil {
-			cmd = exec.Command(edgeTTSPath, "--voice", voiceID, "--text", cleanText, "--write-media", outputPath)
-		} else {
-			defer os.Remove(tmpFile.Name())
-			_, _ = tmpFile.WriteString(cleanText)
-			_ = tmpFile.Close()
-			cmd = exec.Command(edgeTTSPath, "--voice", voiceID, "--file", tmpFile.Name(), "--write-media", outputPath)
+	totalChunks := len(chunks)
+	for i, chunk := range chunks {
+		partNum := i + 1
+		if onProgress != nil {
+			onProgress(partNum, totalChunks, fmt.Sprintf("Đang kết nối dịch vụ giọng đọc và xử lý phần %d/%d...", partNum, totalChunks))
 		}
-	} else {
-		cmd = exec.Command(edgeTTSPath, "--voice", voiceID, "--text", cleanText, "--write-media", outputPath)
-	}
 
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		errStr := strings.TrimSpace(stderr.String())
-		if errStr != "" {
-			return fmt.Errorf("lỗi từ edge-tts: %s", errStr)
+		var audioBytes []byte
+		var synthErr error
+		// Cơ chế tự động thử lại 1 lần nếu gặp lỗi mạng chập chờn
+		for attempt := 1; attempt <= 2; attempt++ {
+			audioBytes, synthErr = SynthesizeSpeechChunk(voiceID, chunk)
+			if synthErr == nil && len(audioBytes) > 0 {
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
 		}
-		return fmt.Errorf("lỗi khi xuất tệp audio: %w", err)
+
+		if synthErr != nil {
+			return fmt.Errorf("lỗi khi tổng hợp âm thanh phần %d/%d: %w", partNum, totalChunks, synthErr)
+		}
+		if len(audioBytes) == 0 {
+			return fmt.Errorf("phần %d/%d không có dữ liệu âm thanh trả về", partNum, totalChunks)
+		}
+
+		if _, err := outFile.Write(audioBytes); err != nil {
+			return fmt.Errorf("lỗi khi ghi luồng âm thanh vào tệp: %w", err)
+		}
+
+		if partNum < totalChunks {
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 
-	fi, err := os.Stat(outputPath)
+	_ = outFile.Sync()
+	fi, err := outFile.Stat()
 	if err != nil || fi.Size() == 0 {
 		return fmt.Errorf("tệp âm thanh chưa được tạo hoặc dung lượng bằng 0 byte")
 	}
 
+	if onProgress != nil {
+		onProgress(totalChunks, totalChunks, "Đã hoàn thành xuất file âm thanh!")
+	}
 	return nil
 }
 
-func findEdgeTTSExecutable() (string, error) {
-	// 1. Kiểm tra PATH thông thường
-	if p, err := exec.LookPath("edge-tts"); err == nil {
-		return p, nil
-	}
-	if runtime.GOOS == "windows" {
-		if p, err := exec.LookPath("edge-tts.exe"); err == nil {
-			return p, nil
-		}
-	}
-
-	// 2. Tìm trong các thư mục cài đặt Python Scripts mặc định
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, ".local", "bin", "edge-tts"),
-		filepath.Join(home, "Library", "Python", "3.9", "bin", "edge-tts"),
-		filepath.Join(home, "Library", "Python", "3.10", "bin", "edge-tts"),
-		filepath.Join(home, "Library", "Python", "3.11", "bin", "edge-tts"),
-		filepath.Join(home, "Library", "Python", "3.12", "bin", "edge-tts"),
-		filepath.Join(home, "AppData", "Roaming", "Python", "Python310", "Scripts", "edge-tts.exe"),
-		filepath.Join(home, "AppData", "Roaming", "Python", "Python311", "Scripts", "edge-tts.exe"),
-		filepath.Join(home, "AppData", "Roaming", "Python", "Python312", "Scripts", "edge-tts.exe"),
-		filepath.Join(home, "AppData", "Local", "Programs", "Python", "Python310", "Scripts", "edge-tts.exe"),
-		filepath.Join(home, "AppData", "Local", "Programs", "Python", "Python311", "Scripts", "edge-tts.exe"),
-		filepath.Join(home, "AppData", "Local", "Programs", "Python", "Python312", "Scripts", "edge-tts.exe"),
-	}
-
-	for _, cand := range candidates {
-		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
-			return cand, nil
-		}
-	}
-
-	return "", fmt.Errorf("not found")
+// ExportTextToAudioWithEdgeTTS là hàm tương thích ngược, thực hiện xuất âm thanh thuần Go qua WebSocket.
+func ExportTextToAudioWithEdgeTTS(voiceID, textContent, outputPath string) error {
+	return ExportTextToAudioWithProgress(voiceID, textContent, outputPath, nil)
 }
 
 // resolveCurrentSceneChapterAct xác định ngữ cảnh thực tế của Cảnh, Chương và Hồi đang được chọn.
@@ -448,7 +822,7 @@ func (ui *NovelistUI) CompileAudioTextForScope(scope AudioExportScope) (compiled
 }
 
 // ShowAudioExportDialog mở hộp thoại trực quan hỗ trợ đa giọng đọc Neural Tiếng Việt
-// và lựa chọn phạm vi phân cấp linh hoạt (Cảnh, Chương, Hồi, Toàn bộ tác phẩm).
+// và lựa chọn phạm vi phân cấp linh hoạt (Cảnh, Chương, Hồi, Toàn bộ tác phẩm) với WebSocket thuần Go.
 func (ui *NovelistUI) ShowAudioExportDialog() {
 	if ui.window == nil {
 		return
@@ -545,7 +919,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 	progressBar := widget.NewProgressBarInfinite()
 	progressBar.Hide()
 
-	statusLabel := widget.NewLabelWithStyle("Sẵn sàng xuất audio bằng giọng đọc Neural Tiếng Việt.", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+	statusLabel := widget.NewLabelWithStyle("Sẵn sàng xuất audio bằng giọng đọc Neural Tiếng Việt (Thuần Go WebSocket).", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 
 	reloadScopeBtn := widget.NewButtonWithIcon("Nạp lại theo phạm vi đang chọn", theme.ViewRefreshIcon(), func() {
 		sc := AudioExportScope(scopeSelect.Selected)
@@ -561,7 +935,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 	// 6. Xây dựng bố cục Dialog
 	headerBox := container.NewVBox(
 		widget.NewLabelWithStyle("🎧 XUẤT BẢN FILE AUDIO (MP3) — ĐA GIỌNG ĐỌC AI & PHẠM VI LINH HOẠT", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewLabel("Sử dụng công nghệ Neural Text-to-Speech (Edge-TTS) miễn phí với đầy đủ giọng điệu 3 miền Bắc - Trung - Nam."),
+		widget.NewLabel("Sử dụng giao thức WebSocket trực tiếp tới dịch vụ giọng đọc Neural — Thuần Go 100% không phụ thuộc Python, với đầy đủ giọng điệu 3 miền Bắc - Trung - Nam."),
 		widget.NewSeparator(),
 	)
 
@@ -621,11 +995,13 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 		voiceSelect.Disable()
 		progressBar.Show()
 
-		statusLabel.SetText(fmt.Sprintf("⏳ Đang tổng hợp nội dung và khởi chạy Edge-TTS Neural (%s — %d từ)...", scopeSelect.Selected, wordCount))
+		statusLabel.SetText(fmt.Sprintf("⏳ Đang kết nối dịch vụ giọng đọc Edge-TTS (%s — %d từ)...", scopeSelect.Selected, wordCount))
 
 		voiceChosen := selectedVoiceID
 		go func() {
-			err := ExportTextToAudioWithEdgeTTS(voiceChosen, textToRead, outPath)
+			err := ExportTextToAudioWithProgress(voiceChosen, textToRead, outPath, func(curr, total int, msg string) {
+				statusLabel.SetText(fmt.Sprintf("⏳ %s", msg))
+			})
 
 			exportBtn.Enable()
 			cancelBtn.Enable()
@@ -654,7 +1030,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 
 			dialog.ShowInformation(
 				"Xuất Audio Thành Công!",
-				fmt.Sprintf("Đã xuất file âm thanh thành công!\n\n• Tệp đích: %s\n• Phạm vi xuất bản: %s\n• Giọng đọc: %s\n• Dung lượng: %.2f MB\n• Số từ: %d từ\n• Thời lượng ước tính: %.1f phút nghe",
+				fmt.Sprintf("Đã xuất file âm thanh thành công (Thuần Go WebSocket)!\n\n• Tệp đích: %s\n• Phạm vi xuất bản: %s\n• Giọng đọc: %s\n• Dung lượng: %.2f MB\n• Số từ: %d từ\n• Thời lượng ước tính: %.1f phút nghe",
 					outPath,
 					scopeSelect.Selected,
 					voiceSelect.Selected,

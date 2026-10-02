@@ -926,30 +926,32 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
               </div>
             )}
 
-            {/* Hộp lệnh Edge-TTS CLI Pattern */}
+            {/* Giao thức Edge-TTS WebSocket thuần Go */}
             <div className="bg-[#181715] text-[#E7E2D8] border border-[#2E2C28] p-4 space-y-2">
               <div className="flex items-center justify-between text-xs text-[#A8A29E]">
                 <div className="flex items-center gap-1.5 font-mono-code">
                   <Terminal className="w-3.5 h-3.5 text-[#E7E2D8]" />
-                  <span>Mô thức lệnh Edge-TTS CLI (Backend Go `os/exec`):</span>
+                  <span>Giao thức kết nối: Pure Go WebSocket (wss://speech.platform.bing.com)</span>
                 </div>
                 <button
                   type="button"
                   onClick={async () => {
                     await navigator.clipboard.writeText(
-                      `edge-tts --voice ${selectedVoiceId} --text "${activeAudioContent.replace(/"/g, '\\"')}" --write-media "${safeFileName}.mp3"`
+                      `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4 [Voice: ${selectedVoiceId}]`
                     );
                     setCopied(true);
                     setTimeout(() => setCopied(false), 2000);
                   }}
                   className="text-[11px] text-[#E7E2D8] hover:text-white underline cursor-pointer"
                 >
-                  Sao chép lệnh Terminal đầy đủ
+                  Sao chép Endpoint WebSocket
                 </button>
               </div>
-              <code className="block font-mono-code text-xs text-[#A7F3D0] break-all bg-black/40 p-2.5 rounded-xs">
-                {edgeTTSCommand}
-              </code>
+              <div className="font-mono-code text-[11px] text-[#93C5FD] bg-black/40 p-2.5 rounded-xs space-y-1">
+                <div>• Endpoint: <span className="text-[#A7F3D0]">wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1</span></div>
+                <div>• Voice: <span className="text-[#FDE047]">{selectedVoiceId}</span> | Format: <span className="text-[#F472B6]">audio-24khz-48kbitrate-mono-mp3</span></div>
+                <div className="text-[#9CA3AF] text-[10px]">Độc lập 100% bằng Go tiêu chuẩn (RFC 6455 + SSML) — Không cần Python, không cần pip install.</div>
+              </div>
             </div>
 
             {/* Nút hành động chính */}
