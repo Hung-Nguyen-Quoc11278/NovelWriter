@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -25,6 +26,15 @@ func parseHexColor(hexStr string) color.NRGBA {
 		_, _ = fmt.Sscanf(clean, "%02x%02x%02x", &r, &g, &b)
 	}
 	return color.NRGBA{R: r, G: g, B: b, A: 0xff}
+}
+
+// colorToHex chuyển đổi đối tượng color.Color bất kỳ từ hộp thoại chọn màu của Fyne sang mã Hex "#rrggbb".
+func colorToHex(c color.Color) string {
+	if c == nil {
+		return DefaultTagColor
+	}
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(b>>8))
 }
 
 // parseHexTintColor tạo màu nền bán trong suốt (alpha thấp) từ mã màu Hex để tô nền huy hiệu Thẻ.
@@ -50,6 +60,267 @@ func firstTagColorOrDefault(tags []Tag) string {
 		return NormalizeHexColor(tags[0].Color)
 	}
 	return "#94a3b8"
+}
+
+// ============================================================================
+// Ô MÀU TRỰC QUAN & BẢNG MÀU NHANH (VISUAL COLOR SWATCH & "+" CUSTOM PICKER)
+// ============================================================================
+
+// ColorSwatchWidget là một ô vuông màu sắc (Custom Fyne Widget) có thể nhấp chuột trực tiếp.
+// Hỗ trợ 2 chế độ:
+//   - Ô màu có sẵn (IsCustomPicker = false): Tô màu nền theo mã Hex; khi được chọn sẽ hiển thị viền trắng dày và dấu kiểm "✓".
+//   - Ô chọn màu tùy chỉnh "+" (IsCustomPicker = true): Có viền trắng nổi bật và dấu "+" ở chính giữa;
+//     khi nhấp sẽ mở hộp thoại bảng màu tự do (dialog.NewColorPicker).
+type ColorSwatchWidget struct {
+	widget.BaseWidget
+	Hex            string
+	IsCustomPicker bool
+	Selected       bool
+	SwatchSize     float32
+	OnTappedSwatch func()
+}
+
+// NewPresetColorSwatch khởi tạo một ô vuông màu sắc mẫu (Preset Swatch).
+func NewPresetColorSwatch(hex string, size float32, onTap func()) *ColorSwatchWidget {
+	w := &ColorSwatchWidget{
+		Hex:            NormalizeHexColor(hex),
+		IsCustomPicker: false,
+		SwatchSize:     size,
+		OnTappedSwatch: onTap,
+	}
+	w.ExtendBaseWidget(w)
+	return w
+}
+
+// NewCustomColorPickerSwatch khởi tạo ô vuông đặc biệt có viền trắng và biểu tượng "+" ở chính giữa
+// để mở bảng chọn màu tùy chỉnh (Custom Color Picker).
+func NewCustomColorPickerSwatch(size float32, onTap func()) *ColorSwatchWidget {
+	w := &ColorSwatchWidget{
+		Hex:            "#1e293b",
+		IsCustomPicker: true,
+		SwatchSize:     size,
+		OnTappedSwatch: onTap,
+	}
+	w.ExtendBaseWidget(w)
+	return w
+}
+
+func (w *ColorSwatchWidget) Tapped(_ *fyne.PointEvent) {
+	PlayUIClickSound()
+	if w.OnTappedSwatch != nil {
+		w.OnTappedSwatch()
+	}
+}
+
+func (w *ColorSwatchWidget) Cursor() desktop.Cursor {
+	return desktop.PointerCursor
+}
+
+func (w *ColorSwatchWidget) CreateRenderer() fyne.WidgetRenderer {
+	outerRing := canvas.NewRectangle(color.Transparent)
+	outerRing.CornerRadius = 7
+
+	bgRect := canvas.NewRectangle(parseHexColor(w.Hex))
+	bgRect.CornerRadius = 6
+
+	symbolText := canvas.NewText("", color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+	symbolText.Alignment = fyne.TextAlignCenter
+	symbolText.TextStyle = fyne.TextStyle{Bold: true}
+
+	r := &colorSwatchRenderer{
+		swatch:     w,
+		outerRing:  outerRing,
+		bgRect:     bgRect,
+		symbolText: symbolText,
+	}
+	r.Refresh()
+	return r
+}
+
+type colorSwatchRenderer struct {
+	swatch     *ColorSwatchWidget
+	outerRing  *canvas.Rectangle
+	bgRect     *canvas.Rectangle
+	symbolText *canvas.Text
+}
+
+func (r *colorSwatchRenderer) Layout(size fyne.Size) {
+	r.outerRing.Move(fyne.NewPos(0, 0))
+	r.outerRing.Resize(size)
+
+	inset := float32(2)
+	r.bgRect.Move(fyne.NewPos(inset, inset))
+	r.bgRect.Resize(fyne.NewSize(size.Width-inset*2, size.Height-inset*2))
+
+	textMin := r.symbolText.MinSize()
+	r.symbolText.Move(fyne.NewPos((size.Width-textMin.Width)/2, (size.Height-textMin.Height)/2))
+	r.symbolText.Resize(textMin)
+}
+
+func (r *colorSwatchRenderer) MinSize() fyne.Size {
+	sz := r.swatch.SwatchSize
+	if sz < 24 {
+		sz = 34
+	}
+	return fyne.NewSize(sz, sz)
+}
+
+func (r *colorSwatchRenderer) Refresh() {
+	fill := parseHexColor(r.swatch.Hex)
+	r.bgRect.FillColor = fill
+
+	if r.swatch.IsCustomPicker {
+		// Ô chọn màu tùy chỉnh ("+"): Luôn có viền trắng rõ nét và dấu "+" ở tâm
+		r.bgRect.StrokeColor = color.NRGBA{R: 255, G: 255, B: 255, A: 245}
+		if r.swatch.Selected {
+			r.bgRect.StrokeWidth = 2.6
+			r.outerRing.StrokeColor = fill
+			r.outerRing.StrokeWidth = 1.6
+			r.symbolText.Text = "+✓"
+			r.symbolText.TextSize = 13
+		} else {
+			r.bgRect.StrokeWidth = 2.0
+			r.outerRing.StrokeColor = color.Transparent
+			r.outerRing.StrokeWidth = 0
+			r.symbolText.Text = "+"
+			r.symbolText.TextSize = 18
+		}
+		r.symbolText.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	} else {
+		// Ô màu có sẵn (Preset Swatch): Hiển thị viền trắng nổi bật và dấu "✓" khi đang được chọn
+		if r.swatch.Selected {
+			r.bgRect.StrokeColor = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+			r.bgRect.StrokeWidth = 2.6
+			r.outerRing.StrokeColor = fill
+			r.outerRing.StrokeWidth = 1.6
+			r.symbolText.Text = "✓"
+			r.symbolText.TextSize = 14
+			r.symbolText.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+		} else {
+			r.bgRect.StrokeColor = color.NRGBA{R: 0, G: 0, B: 0, A: 70}
+			r.bgRect.StrokeWidth = 1.0
+			r.outerRing.StrokeColor = color.Transparent
+			r.outerRing.StrokeWidth = 0
+			r.symbolText.Text = ""
+		}
+	}
+
+	r.outerRing.Refresh()
+	r.bgRect.Refresh()
+	r.symbolText.Refresh()
+	r.Layout(r.swatch.Size())
+}
+
+func (r *colorSwatchRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{r.outerRing, r.bgRect, r.symbolText}
+}
+
+func (r *colorSwatchRenderer) Destroy() {}
+
+// TagColorSwatchPicker quản lý lưới các ô màu vuông trực quan (Preset Swatches)
+// kèm ô "+" có viền trắng để mở bảng chọn màu tùy chỉnh (Fyne Color Picker Dialog).
+type TagColorSwatchPicker struct {
+	parentWin      fyne.Window
+	selectedHex    string
+	swatchSize     float32
+	presetSwatches []*ColorSwatchWidget
+	customSwatch   *ColorSwatchWidget
+	container      *fyne.Container
+	onChanged      func(hex string)
+}
+
+// NewTagColorSwatchPicker khởi tạo bộ chọn màu bằng lưới ô vuông trực quan và nút "+" chọn màu tùy chỉnh.
+func NewTagColorSwatchPicker(parentWin fyne.Window, initialHex string, swatchSize float32, onChanged func(hex string)) *TagColorSwatchPicker {
+	p := &TagColorSwatchPicker{
+		parentWin:   parentWin,
+		selectedHex: NormalizeHexColor(initialHex),
+		swatchSize:  swatchSize,
+		onChanged:   onChanged,
+	}
+
+	presets := DefaultTagColorPresets()
+	objects := make([]fyne.CanvasObject, 0, len(presets)+1)
+
+	for _, preset := range presets {
+		presetHex := NormalizeHexColor(preset.Hex)
+		sw := NewPresetColorSwatch(presetHex, swatchSize, func() {
+			p.SelectHex(presetHex, true)
+		})
+		p.presetSwatches = append(p.presetSwatches, sw)
+		objects = append(objects, sw)
+	}
+
+	// Ô vuông đặc biệt có viền trắng và dấu "+" ở chính giữa để mở bảng màu tùy chỉnh (Custom Color Picker)
+	p.customSwatch = NewCustomColorPickerSwatch(swatchSize, func() {
+		p.openCustomColorPickerDialog()
+	})
+	objects = append(objects, p.customSwatch)
+
+	wrapLayout := NewResponsiveToolbarWrapLayout(8, 8, false, nil)
+	p.container = container.New(wrapLayout, objects...)
+	p.SelectHex(p.selectedHex, false)
+	return p
+}
+
+func (p *TagColorSwatchPicker) openCustomColorPickerDialog() {
+	if p.parentWin == nil {
+		return
+	}
+	picker := dialog.NewColorPicker(
+		"Chọn màu tùy chỉnh",
+		"Chọn màu sắc bất kỳ trên bảng màu cho thẻ:",
+		func(c color.Color) {
+			hex := colorToHex(c)
+			p.SelectHex(hex, true)
+		},
+		p.parentWin,
+	)
+	picker.Advanced = true
+	picker.SetColor(parseHexColor(p.selectedHex))
+	picker.Show()
+}
+
+// Container trả về đối tượng fyne.CanvasObject chứa lưới các ô màu vuông và nút "+".
+func (p *TagColorSwatchPicker) Container() *fyne.Container {
+	return p.container
+}
+
+// SelectedHex trả về mã màu Hex đang được chọn.
+func (p *TagColorSwatchPicker) SelectedHex() string {
+	return p.selectedHex
+}
+
+// SelectHex cập nhật trạng thái ô màu đang chọn (dấu kiểm "✓" trên ô màu mẫu hoặc trên ô "+")
+// và tùy chọn kích hoạt callback onChanged.
+func (p *TagColorSwatchPicker) SelectHex(rawHex string, notify bool) {
+	norm := NormalizeHexColor(rawHex)
+	p.selectedHex = norm
+
+	matchedPreset := false
+	for _, sw := range p.presetSwatches {
+		if strings.EqualFold(sw.Hex, norm) {
+			sw.Selected = true
+			matchedPreset = true
+		} else {
+			sw.Selected = false
+		}
+		sw.Refresh()
+	}
+
+	if p.customSwatch != nil {
+		if !matchedPreset {
+			p.customSwatch.Hex = norm
+			p.customSwatch.Selected = true
+		} else {
+			p.customSwatch.Hex = "#1e293b"
+			p.customSwatch.Selected = false
+		}
+		p.customSwatch.Refresh()
+	}
+
+	if notify && p.onChanged != nil {
+		p.onChanged(norm)
+	}
 }
 
 const (
@@ -130,15 +401,14 @@ type WorldBuildingHub struct {
 	eventDescEntry  *VietnameseEntry
 	eventTagCheck   *widget.CheckGroup
 
-	// Biểu mẫu Quản lý Thẻ theo danh mục & Chọn màu sắc thẻ
+	// Biểu mẫu Quản lý Thẻ theo danh mục & Lưới ô màu trực quan (Visual Swatch Picker)
 	newTagEntry           *VietnameseEntry
 	quickCategorySelect   *widget.Select
-	quickColorSelect      *widget.Select
-	quickColorCircle      *canvas.Circle
+	quickColorPicker      *TagColorSwatchPicker
 	tagFormCategorySelect *widget.Select
 	tagFormNameEntry      *VietnameseEntry
 	tagFormHexEntry       *VietnameseEntry
-	tagFormPresetSelect   *widget.Select
+	tagFormColorPicker    *TagColorSwatchPicker
 	tagFormPreviewDot     *canvas.Circle
 	tagFormPreviewBg      *canvas.Rectangle
 	tagFormPreviewLabel   *widget.Label
@@ -185,28 +455,10 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 		h.quickCategorySelect.SetSelected(EntityTypeTagLabel(EntityCharacter))
 	}
 
-	presets := DefaultTagColorPresets()
-	presetLabels := make([]string, len(presets))
-	labelToHex := make(map[string]string, len(presets))
-	for i, p := range presets {
-		presetLabels[i] = p.Label
-		labelToHex[p.Label] = p.Hex
-	}
-
 	selectedQuickHex := DefaultTagColor
-	var quickDotBox *fyne.Container
-	h.quickColorCircle, quickDotBox = newColorCircleIndicator(selectedQuickHex, 18)
-
-	h.quickColorSelect = widget.NewSelect(presetLabels, func(selected string) {
-		if hex, ok := labelToHex[selected]; ok {
-			selectedQuickHex = hex
-			h.quickColorCircle.FillColor = parseHexColor(hex)
-			h.quickColorCircle.Refresh()
-		}
+	h.quickColorPicker = NewTagColorSwatchPicker(h.parentWin, selectedQuickHex, 26, func(hex string) {
+		selectedQuickHex = hex
 	})
-	if len(presetLabels) > 0 {
-		h.quickColorSelect.SetSelected(presetLabels[0])
-	}
 
 	quickAddTagBtn := widget.NewButtonWithIcon("Thêm thẻ mới", theme.ContentAddIcon(), func() {
 		name := strings.TrimSpace(h.newTagEntry.Text)
@@ -228,9 +480,8 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 	rightQuickControls := container.NewHBox(
 		widget.NewLabel("Danh mục:"),
 		h.quickCategorySelect,
-		widget.NewLabel("Màu sắc thẻ:"),
-		container.NewCenter(quickDotBox),
-		h.quickColorSelect,
+		widget.NewLabel("Bảng màu nhanh:"),
+		container.NewCenter(h.quickColorPicker.Container()),
 		quickAddTagBtn,
 	)
 
@@ -972,16 +1223,6 @@ func (h *WorldBuildingHub) clearEventForm() {
 // ==================== TAB 5: QUẢN LÝ THẺ THEO DANH MỤC & MÀU SẮC THẺ ====================
 
 func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
-	presets := DefaultTagColorPresets()
-	presetLabels := make([]string, len(presets))
-	labelToHex := make(map[string]string, len(presets))
-	hexToLabel := make(map[string]string, len(presets))
-	for i, p := range presets {
-		presetLabels[i] = p.Label
-		labelToHex[p.Label] = p.Hex
-		hexToLabel[strings.ToLower(p.Hex)] = p.Label
-	}
-
 	categoryLabels := AllEntityTypeTagLabels()
 	filterCategoryOpts := append([]string{allCategoriesFilterLabel}, categoryLabels...)
 
@@ -1023,6 +1264,7 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		)),
 	)
 
+	syncingHex := false
 	updateLiveTagPreview := func() {
 		hex := NormalizeHexColor(h.tagFormHexEntry.Text)
 		tagName := strings.TrimSpace(h.tagFormNameEntry.Text)
@@ -1041,40 +1283,26 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		h.tagFormPreviewLabel.SetText(fmt.Sprintf("🏷️ [%s] #%s  (%s)", catLabel, tagName, hex))
 	}
 
+	// Lưới ô màu trực quan (Visual Color Swatch Grid) kèm ô vuông "+" mở bảng chọn màu tùy chỉnh
+	h.tagFormColorPicker = NewTagColorSwatchPicker(h.parentWin, DefaultTagColor, 34, func(selectedHex string) {
+		syncingHex = true
+		h.tagFormHexEntry.SetText(selectedHex)
+		syncingHex = false
+		updateLiveTagPreview()
+	})
+
 	h.tagFormCategorySelect.OnChanged = func(_ string) {
 		updateLiveTagPreview()
 	}
 	h.tagFormNameEntry.SetOnChangedCallback(func(_ string) {
 		updateLiveTagPreview()
 	})
-	h.tagFormHexEntry.SetOnChangedCallback(func(_ string) {
+	h.tagFormHexEntry.SetOnChangedCallback(func(val string) {
+		if !syncingHex && h.tagFormColorPicker != nil {
+			h.tagFormColorPicker.SelectHex(val, false)
+		}
 		updateLiveTagPreview()
 	})
-
-	h.tagFormPresetSelect = widget.NewSelect(presetLabels, func(selected string) {
-		if hex, ok := labelToHex[selected]; ok {
-			h.tagFormHexEntry.SetText(hex)
-			updateLiveTagPreview()
-		}
-	})
-	if len(presetLabels) > 0 {
-		h.tagFormPresetSelect.SetSelected(presetLabels[0])
-	}
-
-	// Bảng nút chọn màu nhanh trực quan
-	paletteGrid := container.NewGridWithColumns(3)
-	for _, preset := range presets {
-		pHex := preset.Hex
-		pLabel := preset.Label
-		_, dotBox := newColorCircleIndicator(pHex, 14)
-		colorBtn := widget.NewButton(pLabel, func() {
-			h.tagFormHexEntry.SetText(pHex)
-			h.tagFormPresetSelect.SetSelected(pLabel)
-			updateLiveTagPreview()
-		})
-		colorBtn.Importance = widget.LowImportance
-		paletteGrid.Add(container.NewBorder(nil, nil, container.NewCenter(dotBox), nil, colorBtn))
-	}
 
 	// Danh sách Thẻ bên trái với huy hiệu màu sắc & nhãn Danh mục thẻ
 	h.tagList = widget.NewList(
@@ -1176,9 +1404,12 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		h.selectedTagID = t.ID
 		h.tagFormCategorySelect.SetSelected(EntityTypeTagLabel(t.EntityType))
 		h.tagFormNameEntry.SetText(t.Name)
-		h.tagFormHexEntry.SetText(NormalizeHexColor(t.Color))
-		if lbl, ok := hexToLabel[strings.ToLower(NormalizeHexColor(t.Color))]; ok {
-			h.tagFormPresetSelect.SetSelected(lbl)
+		normHex := NormalizeHexColor(t.Color)
+		syncingHex = true
+		h.tagFormHexEntry.SetText(normHex)
+		syncingHex = false
+		if h.tagFormColorPicker != nil {
+			h.tagFormColorPicker.SelectHex(normHex, false)
 		}
 		updateLiveTagPreview()
 	}
@@ -1252,13 +1483,10 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		widget.NewForm(
 			widget.NewFormItem("Danh mục thẻ", h.tagFormCategorySelect),
 			widget.NewFormItem("Tên thẻ", h.tagFormNameEntry),
-			widget.NewFormItem("Màu sắc thẻ (Gợi ý)", h.tagFormPresetSelect),
+			widget.NewFormItem("Bảng màu nhanh", h.tagFormColorPicker.Container()),
 			widget.NewFormItem("Mã màu Hex", h.tagFormHexEntry),
 			widget.NewFormItem("Xem trước huy hiệu", previewBadge),
 		),
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("BẢNG CHỌN MÀU NHANH", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		paletteGrid,
 		widget.NewSeparator(),
 		container.NewHBox(resetBtn, layout.NewSpacer(), delTagBtn, saveTagBtn),
 	))
@@ -1279,6 +1507,9 @@ func (h *WorldBuildingHub) clearTagForm() {
 	if h.tagFormHexEntry != nil {
 		h.tagFormHexEntry.SetText(DefaultTagColor)
 	}
+	if h.tagFormColorPicker != nil {
+		h.tagFormColorPicker.SelectHex(DefaultTagColor, false)
+	}
 }
 
 // showCreateScopedTagDialog mở hộp thoại tạo nhanh một Thẻ có màu sắc cho đúng Danh mục thực thể (EntityType) đang mở.
@@ -1293,26 +1524,20 @@ func (h *WorldBuildingHub) showCreateScopedTagDialog(entityType EntityType, targ
 
 	dotCircle, dotWrap := newColorCircleIndicator(DefaultTagColor, 20)
 
-	presets := DefaultTagColorPresets()
-	presetLabels := make([]string, len(presets))
-	labelToHex := make(map[string]string, len(presets))
-	for i, p := range presets {
-		presetLabels[i] = p.Label
-		labelToHex[p.Label] = p.Hex
-	}
-
-	colorSelect := widget.NewSelect(presetLabels, func(selected string) {
-		if hex, ok := labelToHex[selected]; ok {
-			hexEntry.SetText(hex)
-			dotCircle.FillColor = parseHexColor(hex)
-			dotCircle.Refresh()
-		}
+	syncing := false
+	var swatchPicker *TagColorSwatchPicker
+	swatchPicker = NewTagColorSwatchPicker(h.parentWin, DefaultTagColor, 32, func(selectedHex string) {
+		syncing = true
+		hexEntry.SetText(selectedHex)
+		syncing = false
+		dotCircle.FillColor = parseHexColor(selectedHex)
+		dotCircle.Refresh()
 	})
-	if len(presetLabels) > 0 {
-		colorSelect.SetSelected(presetLabels[0])
-	}
 
 	hexEntry.SetOnChangedCallback(func(val string) {
+		if !syncing && swatchPicker != nil {
+			swatchPicker.SelectHex(val, false)
+		}
 		dotCircle.FillColor = parseHexColor(val)
 		dotCircle.Refresh()
 	})
@@ -1322,7 +1547,7 @@ func (h *WorldBuildingHub) showCreateScopedTagDialog(entityType EntityType, targ
 	dialog.ShowForm("Thêm "+catLabel+" mới", "Tạo thẻ", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Danh mục", widget.NewLabelWithStyle(catLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})),
 		widget.NewFormItem("Tên thẻ", nameEntry),
-		widget.NewFormItem("Chọn màu", colorSelect),
+		widget.NewFormItem("Bảng màu nhanh", swatchPicker.Container()),
 		widget.NewFormItem("Màu sắc thẻ (Hex)", hexRow),
 	}, func(confirmed bool) {
 		if !confirmed || strings.TrimSpace(nameEntry.Text) == "" {
@@ -1362,27 +1587,26 @@ func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
 	nameEntry := NewVietEntry()
 	nameEntry.SetText(tag.Name)
 
+	initialHex := NormalizeHexColor(tag.Color)
 	hexEntry := NewVietEntry()
-	hexEntry.SetText(NormalizeHexColor(tag.Color))
+	hexEntry.SetText(initialHex)
 
-	dotCircle, dotWrap := newColorCircleIndicator(tag.Color, 20)
+	dotCircle, dotWrap := newColorCircleIndicator(initialHex, 20)
 
-	presets := DefaultTagColorPresets()
-	presetLabels := make([]string, len(presets))
-	labelToHex := make(map[string]string, len(presets))
-	for i, p := range presets {
-		presetLabels[i] = p.Label
-		labelToHex[p.Label] = p.Hex
-	}
-
-	colorSelect := widget.NewSelect(presetLabels, func(selected string) {
-		if hex, ok := labelToHex[selected]; ok {
-			hexEntry.SetText(hex)
-			dotCircle.FillColor = parseHexColor(hex)
-			dotCircle.Refresh()
-		}
+	syncing := false
+	var swatchPicker *TagColorSwatchPicker
+	swatchPicker = NewTagColorSwatchPicker(h.parentWin, initialHex, 32, func(selectedHex string) {
+		syncing = true
+		hexEntry.SetText(selectedHex)
+		syncing = false
+		dotCircle.FillColor = parseHexColor(selectedHex)
+		dotCircle.Refresh()
 	})
+
 	hexEntry.SetOnChangedCallback(func(val string) {
+		if !syncing && swatchPicker != nil {
+			swatchPicker.SelectHex(val, false)
+		}
 		dotCircle.FillColor = parseHexColor(val)
 		dotCircle.Refresh()
 	})
@@ -1392,7 +1616,7 @@ func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
 	dialog.ShowForm("Chỉnh sửa thẻ", "Lưu thay đổi", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Danh mục thẻ", categorySelect),
 		widget.NewFormItem("Tên thẻ", nameEntry),
-		widget.NewFormItem("Chọn màu", colorSelect),
+		widget.NewFormItem("Bảng màu nhanh", swatchPicker.Container()),
 		widget.NewFormItem("Màu sắc thẻ (Hex)", hexRow),
 	}, func(confirmed bool) {
 		if !confirmed || strings.TrimSpace(nameEntry.Text) == "" {

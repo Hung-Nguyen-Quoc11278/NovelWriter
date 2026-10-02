@@ -161,24 +161,25 @@ type Tag struct {
 	Color      string
 }
 
-// TagColorPreset định nghĩa một mẫu màu gợi ý kèm tên gọi Tiếng Việt cho giao diện chọn màu thẻ.
+// TagColorPreset định nghĩa một mẫu ô màu trực quan (Swatch) cho bảng màu nhanh của Thẻ.
 type TagColorPreset struct {
-	Label string
-	Hex   string
+	Name string
+	Hex  string
 }
 
-// DefaultTagColorPresets trả về bảng màu Hex gợi ý cho các nhóm Thẻ trong tiểu thuyết.
+// DefaultTagColorPresets trả về danh sách các mã màu Hex phổ biến cho lưới ô màu nhanh (Visual Color Swatch Grid).
 func DefaultTagColorPresets() []TagColorPreset {
 	return []TagColorPreset{
-		{Label: "Xanh lam (#3498db)", Hex: "#3498db"},
-		{Label: "Đỏ chu sa (#e74c3c)", Hex: "#e74c3c"},
-		{Label: "Xanh ngọc bích (#2ecc71)", Hex: "#2ecc71"},
-		{Label: "Tím huyền bí (#9b59b6)", Hex: "#9b59b6"},
-		{Label: "Vàng hổ phách (#f39c12)", Hex: "#f39c12"},
-		{Label: "Xanh lục bảo (#1abc9c)", Hex: "#1abc9c"},
-		{Label: "Cam hoàng hôn (#e67e22)", Hex: "#e67e22"},
-		{Label: "Hồng san hô (#d81b60)", Hex: "#d81b60"},
-		{Label: "Xám đá phiến (#34495e)", Hex: "#34495e"},
+		{Name: "Xanh lam", Hex: "#3498db"},
+		{Name: "Đỏ chu sa", Hex: "#e74c3c"},
+		{Name: "Xanh lục bảo", Hex: "#2ecc71"},
+		{Name: "Tím huyền bí", Hex: "#9b59b6"},
+		{Name: "Cam hoàng hôn", Hex: "#e67e22"},
+		{Name: "Vàng hổ phách", Hex: "#f39c12"},
+		{Name: "Xanh ngọc bích", Hex: "#1abc9c"},
+		{Name: "Hồng san hô", Hex: "#d81b60"},
+		{Name: "Chàm cổ điển", Hex: "#6366f1"},
+		{Name: "Xám đá phiến", Hex: "#34495e"},
 	}
 }
 
