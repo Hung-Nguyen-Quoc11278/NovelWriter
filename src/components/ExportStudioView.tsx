@@ -42,6 +42,27 @@ export const VIETNAMESE_VOICE_PRESETS: VietnameseVoicePreset[] = [
     description:
       'Giọng nam miền Nam ấm áp, truyền cảm, rõ chữ — rất thích hợp cho tiểu thuyết lịch sử & phiêu lưu.',
   },
+  {
+    id: 'vi-VN-HoangMaiNeural',
+    label: 'Hoàng Mai (Nữ - Miền Bắc)',
+    gender: 'Nữ',
+    description:
+      'Giọng nữ Hà Nội chuẩn mực, thanh lịch, phát âm tròn vành rõ chữ — rất thích hợp cho truyện văn học kinh điển & ký sự.',
+  },
+  {
+    id: 'vi-VN-NamKhanhNeural',
+    label: 'Nam Khánh (Nam - Miền Bắc)',
+    gender: 'Nam',
+    description:
+      'Giọng nam miền Bắc đĩnh đạc, đầm ấm, quyền uy và cuốn hút — thích hợp cho truyện kỳ ảo, hành động & trinh thám.',
+  },
+  {
+    id: 'vi-VN-ThuTrangNeural',
+    label: 'Thu Trang (Nữ - Miền Trung)',
+    gender: 'Nữ',
+    description:
+      'Giọng nữ miền Trung nhẹ nhàng, mộc mạc, tha thiết đậm chất thơ — thích hợp cho truyện đồng quê, hồi ức & chiêm nghiệm.',
+  },
 ];
 
 function cleanProseForSpeech(raw: string): string {

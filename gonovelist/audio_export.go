@@ -42,6 +42,42 @@ var VietnameseVoicePresets = []VietnameseVoicePreset{
 		Gender:      "Nam",
 		Description: "Giọng nam miền Nam ấm áp, truyền cảm, rõ chữ — rất thích hợp cho tiểu thuyết lịch sử & phiêu lưu.",
 	},
+	{
+		ID:          "vi-VN-HoangMaiNeural",
+		Label:       "Hoàng Mai (Nữ - Miền Bắc)",
+		Gender:      "Nữ",
+		Description: "Giọng nữ Hà Nội chuẩn mực, thanh lịch, phát âm tròn vành rõ chữ — rất thích hợp cho truyện văn học kinh điển & ký sự.",
+	},
+	{
+		ID:          "vi-VN-NamKhanhNeural",
+		Label:       "Nam Khánh (Nam - Miền Bắc)",
+		Gender:      "Nam",
+		Description: "Giọng nam miền Bắc đĩnh đạc, đầm ấm, quyền uy và cuốn hút — thích hợp cho truyện kỳ ảo, hành động & trinh thám.",
+	},
+	{
+		ID:          "vi-VN-ThuTrangNeural",
+		Label:       "Thu Trang (Nữ - Miền Trung)",
+		Gender:      "Nữ",
+		Description: "Giọng nữ miền Trung nhẹ nhàng, mộc mạc, tha thiết đậm chất thơ — thích hợp cho truyện đồng quê, hồi ức & chiêm nghiệm.",
+	},
+}
+
+// AudioExportScope định nghĩa phạm vi phân cấp nội dung cần xuất sang âm thanh.
+type AudioExportScope string
+
+const (
+	AudioScopeCurrentScene   AudioExportScope = "Cảnh hiện tại"
+	AudioScopeCurrentChapter AudioExportScope = "Chương hiện tại"
+	AudioScopeCurrentAct     AudioExportScope = "Hồi hiện tại"
+	AudioScopeFullNovel      AudioExportScope = "Toàn bộ tác phẩm"
+)
+
+// AllAudioExportScopes trả về danh sách các phạm vi xuất bản audio cho widget.Select.
+var AllAudioExportScopes = []string{
+	string(AudioScopeCurrentScene),
+	string(AudioScopeCurrentChapter),
+	string(AudioScopeCurrentAct),
+	string(AudioScopeFullNovel),
 }
 
 // AllVietnameseVoiceLabels trả về danh sách các nhãn hiển thị cho widget.Select.
@@ -200,49 +236,241 @@ func findEdgeTTSExecutable() (string, error) {
 	return "", fmt.Errorf("not found")
 }
 
-// ShowAudioExportDialog mở hộp thoại trực quan để chọn giọng đọc Neural Tiếng Việt,
-// tinh chỉnh văn bản, chọn nơi lưu và xuất file MP3 qua Edge-TTS.
+// resolveCurrentSceneChapterAct xác định ngữ cảnh thực tế của Cảnh, Chương và Hồi đang được chọn.
+func (ui *NovelistUI) resolveCurrentSceneChapterAct() (*Scene, *Chapter, *Act) {
+	var curScene *Scene
+	var curChapter *Chapter
+	var curAct *Act
+
+	// 1. Thử lấy từ editorPanel nếu đang mở cảnh
+	if ui.editorPanel != nil && ui.editorPanel.activeScene != nil {
+		curScene = ui.editorPanel.activeScene
+		if curScene.ChapterID > 0 {
+			curChapter, _ = ui.store.GetChapter(curScene.ChapterID)
+			if curChapter != nil && curChapter.ActID > 0 {
+				curAct, _ = ui.store.GetAct(curChapter.ActID)
+			}
+		}
+	}
+
+	// 2. Nếu chưa có cảnh hoặc đang chọn nút khác trên cây phân cấp
+	if curScene == nil && ui.selectedUID != "" {
+		kind, id, err := ParseNodeUID(ui.selectedUID)
+		if err == nil {
+			switch kind {
+			case "scene":
+				curScene, _ = ui.store.GetScene(id)
+				if curScene != nil && curScene.ChapterID > 0 {
+					curChapter, _ = ui.store.GetChapter(curScene.ChapterID)
+					if curChapter != nil && curChapter.ActID > 0 {
+						curAct, _ = ui.store.GetAct(curChapter.ActID)
+					}
+				}
+			case "chapter":
+				curChapter, _ = ui.store.GetChapter(id)
+				if curChapter != nil {
+					if curChapter.ActID > 0 {
+						curAct, _ = ui.store.GetAct(curChapter.ActID)
+					}
+					scenes, _ := ui.store.ListScenes(curChapter.ID)
+					if len(scenes) > 0 {
+						curScene = &scenes[0]
+					}
+				}
+			case "act":
+				curAct, _ = ui.store.GetAct(id)
+				if curAct != nil {
+					chaps, _ := ui.store.ListChapters(curAct.ID)
+					if len(chaps) > 0 {
+						curChapter = &chaps[0]
+						scenes, _ := ui.store.ListScenes(curChapter.ID)
+						if len(scenes) > 0 {
+							curScene = &scenes[0]
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Dự phòng nếu chưa có gì được chọn: lấy Hồi, Chương và Cảnh đầu tiên của tác phẩm
+	if curAct == nil {
+		allActs, _ := ui.store.ListActs(ui.activeProject.ID)
+		if len(allActs) > 0 {
+			curAct = &allActs[0]
+			chaps, _ := ui.store.ListChapters(curAct.ID)
+			if len(chaps) > 0 {
+				curChapter = &chaps[0]
+				scenes, _ := ui.store.ListScenes(curChapter.ID)
+				if len(scenes) > 0 {
+					curScene = &scenes[0]
+				}
+			}
+		}
+	}
+
+	return curScene, curChapter, curAct
+}
+
+// CompileAudioTextForScope duyệt cơ sở dữ liệu SQLite theo phân cấp Hồi -> Chương -> Cảnh
+// và tổng hợp nội dung văn bản sạch phù hợp cho giọng đọc Edge-TTS.
+func (ui *NovelistUI) CompileAudioTextForScope(scope AudioExportScope) (compiledText string, scopeTitle string, totalScenes int, summaryInfo string) {
+	curScene, curChapter, curAct := ui.resolveCurrentSceneChapterAct()
+	var sb strings.Builder
+
+	switch scope {
+	case AudioScopeCurrentScene:
+		scTitle := "Cảnh"
+		scContent := ""
+		if curScene != nil {
+			scTitle = curScene.Title
+			scContent = curScene.Content
+			if ui.editorPanel != nil && ui.editorPanel.activeScene != nil && ui.editorPanel.activeScene.ID == curScene.ID {
+				if ui.editorPanel.proseEntry != nil && strings.TrimSpace(ui.editorPanel.proseEntry.Text) != "" {
+					scContent = ui.editorPanel.proseEntry.Text
+				}
+			}
+		}
+		sb.WriteString(scTitle + ".\n\n")
+		sb.WriteString(CleanProseForSpeech(scContent))
+		scopeTitle = fmt.Sprintf("%s_%s", ui.activeProject.Title, scTitle)
+		summaryInfo = fmt.Sprintf("Cảnh đơn: %s", scTitle)
+		return sb.String(), scopeTitle, 1, summaryInfo
+
+	case AudioScopeCurrentChapter:
+		if curChapter == nil {
+			return ui.CompileAudioTextForScope(AudioScopeFullNovel)
+		}
+		scopeTitle = fmt.Sprintf("%s_%s", ui.activeProject.Title, curChapter.Title)
+		sb.WriteString(curChapter.Title + ".\n\n")
+
+		scenes, _ := ui.store.ListScenes(curChapter.ID)
+		count := 0
+		for _, sc := range scenes {
+			text := sc.Content
+			if ui.editorPanel != nil && ui.editorPanel.activeScene != nil && ui.editorPanel.activeScene.ID == sc.ID {
+				if ui.editorPanel.proseEntry != nil && strings.TrimSpace(ui.editorPanel.proseEntry.Text) != "" {
+					text = ui.editorPanel.proseEntry.Text
+				}
+			}
+			clean := CleanProseForSpeech(text)
+			if clean == "" {
+				continue
+			}
+			count++
+			if sc.Title != "" {
+				sb.WriteString(sc.Title + ".\n\n")
+			}
+			sb.WriteString(clean)
+			sb.WriteString("\n\n---\n\n")
+		}
+		summaryInfo = fmt.Sprintf("Chương: %s (%d cảnh)", curChapter.Title, count)
+		return sb.String(), scopeTitle, count, summaryInfo
+
+	case AudioScopeCurrentAct:
+		if curAct == nil {
+			return ui.CompileAudioTextForScope(AudioScopeFullNovel)
+		}
+		scopeTitle = fmt.Sprintf("%s_%s", ui.activeProject.Title, curAct.Title)
+		sb.WriteString(curAct.Title + ".\n\n")
+
+		chaps, _ := ui.store.ListChapters(curAct.ID)
+		count := 0
+		for _, ch := range chaps {
+			sb.WriteString(ch.Title + ".\n\n")
+			scenes, _ := ui.store.ListScenes(ch.ID)
+			for _, sc := range scenes {
+				text := sc.Content
+				if ui.editorPanel != nil && ui.editorPanel.activeScene != nil && ui.editorPanel.activeScene.ID == sc.ID {
+					if ui.editorPanel.proseEntry != nil && strings.TrimSpace(ui.editorPanel.proseEntry.Text) != "" {
+						text = ui.editorPanel.proseEntry.Text
+					}
+				}
+				clean := CleanProseForSpeech(text)
+				if clean == "" {
+					continue
+				}
+				count++
+				if sc.Title != "" {
+					sb.WriteString(sc.Title + ".\n\n")
+				}
+				sb.WriteString(clean)
+				sb.WriteString("\n\n---\n\n")
+			}
+		}
+		summaryInfo = fmt.Sprintf("Hồi: %s (%d chương, %d cảnh)", curAct.Title, len(chaps), count)
+		return sb.String(), scopeTitle, count, summaryInfo
+
+	case AudioScopeFullNovel:
+		fallthrough
+	default:
+		scopeTitle = fmt.Sprintf("%s_Toan_Bo_Tac_Pham", ui.activeProject.Title)
+		sb.WriteString(ui.activeProject.Title + ".\n")
+		if ui.activeProject.Author != "" {
+			sb.WriteString("Tác giả: " + ui.activeProject.Author + ".\n")
+		}
+		if strings.TrimSpace(ui.activeProject.Synopsis) != "" {
+			sb.WriteString("Tóm tắt tác phẩm:\n" + CleanProseForSpeech(ui.activeProject.Synopsis) + "\n\n")
+		}
+		sb.WriteString("\n====================\n\n")
+
+		allActs, _ := ui.store.ListActs(ui.activeProject.ID)
+		count := 0
+		for _, act := range allActs {
+			sb.WriteString(act.Title + ".\n\n")
+			chaps, _ := ui.store.ListChapters(act.ID)
+			for _, ch := range chaps {
+				sb.WriteString(ch.Title + ".\n\n")
+				scenes, _ := ui.store.ListScenes(ch.ID)
+				for _, sc := range scenes {
+					text := sc.Content
+					if ui.editorPanel != nil && ui.editorPanel.activeScene != nil && ui.editorPanel.activeScene.ID == sc.ID {
+						if ui.editorPanel.proseEntry != nil && strings.TrimSpace(ui.editorPanel.proseEntry.Text) != "" {
+							text = ui.editorPanel.proseEntry.Text
+						}
+					}
+					clean := CleanProseForSpeech(text)
+					if clean == "" {
+						continue
+					}
+					count++
+					if sc.Title != "" {
+						sb.WriteString(sc.Title + ".\n\n")
+					}
+					sb.WriteString(clean)
+					sb.WriteString("\n\n---\n\n")
+				}
+			}
+		}
+		summaryInfo = fmt.Sprintf("Toàn bộ tác phẩm: %s (%d hồi, %d cảnh)", ui.activeProject.Title, len(allActs), count)
+		return sb.String(), scopeTitle, count, summaryInfo
+	}
+}
+
+// ShowAudioExportDialog mở hộp thoại trực quan hỗ trợ đa giọng đọc Neural Tiếng Việt
+// và lựa chọn phạm vi phân cấp linh hoạt (Cảnh, Chương, Hồi, Toàn bộ tác phẩm).
 func (ui *NovelistUI) ShowAudioExportDialog() {
 	if ui.window == nil {
 		return
 	}
 
-	// 1. Thu thập văn bản mặc định từ Cảnh đang mở hoặc toàn bộ tác phẩm
-	defaultContent := ""
-	defaultTitle := ui.activeProject.Title
-	if ui.editorPanel != nil && ui.editorPanel.activeScene != nil {
-		defaultContent = ui.editorPanel.proseEntry.Text
-		if defaultContent == "" {
-			defaultContent = ui.editorPanel.activeScene.Content
-		}
-		defaultTitle = fmt.Sprintf("%s_%s", ui.activeProject.Title, ui.editorPanel.activeScene.Title)
-	} else {
-		// Nạp cảnh đầu tiên có nội dung
-		allActs, _ := ui.store.ListActs(ui.activeProject.ID)
-		for _, a := range allActs {
-			chaps, _ := ui.store.ListChapters(a.ID)
-			for _, ch := range chaps {
-				scenes, _ := ui.store.ListScenes(ch.ID)
-				for _, sc := range scenes {
-					if strings.TrimSpace(sc.Content) != "" {
-						defaultContent = sc.Content
-						defaultTitle = fmt.Sprintf("%s_%s", ui.activeProject.Title, sc.Title)
-						break
-					}
-				}
-				if defaultContent != "" {
-					break
-				}
-			}
-			if defaultContent != "" {
-				break
-			}
-		}
+	// Xác định phạm vi ban đầu: ưu tiên Cảnh hiện tại nếu đang mở, ngược lại chọn Toàn bộ tác phẩm
+	initialScope := AudioScopeCurrentScene
+	if ui.editorPanel == nil || ui.editorPanel.activeScene == nil {
+		initialScope = AudioScopeFullNovel
 	}
 
-	cleanedInitialText := CleanProseForSpeech(defaultContent)
+	initialContent, initialTitle, _, initialSummary := ui.CompileAudioTextForScope(initialScope)
 
-	// 2. Các widget giao diện
+	// 1. Selector Phạm vi xuất bản (Audio Export Scope)
+	scopeSelect := widget.NewSelect(AllAudioExportScopes, nil)
+	scopeSelect.SetSelected(string(initialScope))
+
+	scopeInfoLabel := widget.NewLabel(fmt.Sprintf("📌 %s", initialSummary))
+	scopeInfoLabel.Wrapping = fyne.TextWrapWord
+	scopeInfoLabel.TextStyle = fyne.TextStyle{Italic: true}
+
+	// 2. Selector Giọng đọc Neural Tiếng Việt (Hoài Mỹ, Nam Minh, Hoàng Mai, Nam Khánh, Thu Trang)
 	voiceLabels := AllVietnameseVoiceLabels()
 	selectedVoiceID := VietnameseVoicePresets[0].ID
 	voiceSelect := widget.NewSelect(voiceLabels, nil)
@@ -257,29 +485,40 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 		voiceDescLabel.SetText(ResolveVoiceDescriptionFromLabel(chosen))
 	}
 
-	// Khung soạn thảo / xem trước văn bản cần đọc
+	// 3. Khung soạn thảo / xem trước văn bản cần chuyển thành audio
 	contentEntry := NewVietMultiLineEntry()
-	contentEntry.SetPlaceHolder("Nhập hoặc dán văn bản cần đọc thành tiếng...")
-	contentEntry.SetText(cleanedInitialText)
+	contentEntry.SetPlaceHolder("Nội dung văn bản được biên dịch tự động theo phạm vi đã chọn...")
+	contentEntry.SetText(initialContent)
 	contentEntry.SetMinRowsVisible(7)
 
 	statsLabel := widget.NewLabel("")
 	updateStats := func(text string) {
 		words := len(strings.Fields(text))
 		chars := utf8.RuneCountInString(text)
-		statsLabel.SetText(fmt.Sprintf("📊 Độ dài: %d từ  •  %d ký tự (khoảng %.1f phút nghe)",
+		statsLabel.SetText(fmt.Sprintf("📊 Thống kê: %d từ  •  %d ký tự  •  Thời lượng ước tính: khoảng %.1f phút nghe (chuẩn 160 từ/phút)",
 			words, chars, float64(words)/160.0))
 	}
-	updateStats(cleanedInitialText)
+	updateStats(initialContent)
 
 	contentEntry.SetOnChangedCallback(func(text string) {
 		updateStats(text)
 	})
 
-	// Đường dẫn lưu file MP3 đích
-	suggestedFileName := sanitizeFileName(defaultTitle) + ".mp3"
+	// 4. Đường dẫn lưu tệp MP3 đích
+	suggestedFileName := sanitizeFileName(initialTitle) + ".mp3"
 	pathEntry := NewVietEntry()
 	pathEntry.SetText(suggestedFileName)
+
+	// Lắng nghe thay đổi Phạm vi xuất bản: Tự động tổng hợp lại nội dung và cập nhật tên file
+	scopeSelect.OnChanged = func(chosen string) {
+		sc := AudioExportScope(chosen)
+		compiled, title, totalScenes, summary := ui.CompileAudioTextForScope(sc)
+		contentEntry.SetText(compiled)
+		updateStats(compiled)
+		suggestedFileName = sanitizeFileName(title) + ".mp3"
+		pathEntry.SetText(suggestedFileName)
+		scopeInfoLabel.SetText(fmt.Sprintf("📌 %s (tổng cộng %d cảnh được biên dịch)", summary, totalScenes))
+	}
 
 	browseBtn := widget.NewButtonWithIcon("Chọn nơi lưu...", theme.FolderOpenIcon(), func() {
 		fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
@@ -302,27 +541,33 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 		fd.Show()
 	})
 
-	// Trạng thái và thanh tiến trình (ẩn ban đầu)
+	// 5. Trạng thái và thanh tiến trình
 	progressBar := widget.NewProgressBarInfinite()
 	progressBar.Hide()
 
 	statusLabel := widget.NewLabelWithStyle("Sẵn sàng xuất audio bằng giọng đọc Neural Tiếng Việt.", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 
-	// Nút nạp lại nội dung cảnh hiện tại
-	reloadSceneBtn := widget.NewButtonWithIcon("Nạp lại cảnh hiện tại", theme.ViewRefreshIcon(), func() {
-		if ui.editorPanel != nil && ui.editorPanel.activeScene != nil {
-			txt := CleanProseForSpeech(ui.editorPanel.proseEntry.Text)
-			contentEntry.SetText(txt)
-			updateStats(txt)
-		}
+	reloadScopeBtn := widget.NewButtonWithIcon("Nạp lại theo phạm vi đang chọn", theme.ViewRefreshIcon(), func() {
+		sc := AudioExportScope(scopeSelect.Selected)
+		compiled, title, totalScenes, summary := ui.CompileAudioTextForScope(sc)
+		contentEntry.SetText(compiled)
+		updateStats(compiled)
+		suggestedFileName = sanitizeFileName(title) + ".mp3"
+		pathEntry.SetText(suggestedFileName)
+		scopeInfoLabel.SetText(fmt.Sprintf("📌 %s (tổng cộng %d cảnh được biên dịch)", summary, totalScenes))
 	})
-	reloadSceneBtn.Importance = widget.LowImportance
+	reloadScopeBtn.Importance = widget.LowImportance
 
-	// 3. Xây dựng bố cục Dialog
+	// 6. Xây dựng bố cục Dialog
 	headerBox := container.NewVBox(
-		widget.NewLabelWithStyle("🎧 XUẤT BẢN FILE AUDIO (MP3) — GIỌNG ĐỌC AI TIẾNG VIỆT", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewLabel("Sử dụng công nghệ Neural Text-to-Speech miễn phí từ Edge-TTS với giọng đọc tự nhiên, chuẩn sắc thái Tiếng Việt."),
+		widget.NewLabelWithStyle("🎧 XUẤT BẢN FILE AUDIO (MP3) — ĐA GIỌNG ĐỌC AI & PHẠM VI LINH HOẠT", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel("Sử dụng công nghệ Neural Text-to-Speech (Edge-TTS) miễn phí với đầy đủ giọng điệu 3 miền Bắc - Trung - Nam."),
 		widget.NewSeparator(),
+	)
+
+	scopeCard := container.NewVBox(
+		container.NewBorder(nil, nil, widget.NewLabelWithStyle("Phạm vi xuất bản:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, scopeSelect),
+		scopeInfoLabel,
 	)
 
 	voiceCard := container.NewVBox(
@@ -332,8 +577,8 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 
 	contentHeader := container.NewBorder(
 		nil, nil,
-		widget.NewLabelWithStyle("Nội dung văn bản để đọc thành tiếng:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		reloadSceneBtn,
+		widget.NewLabelWithStyle("Nội dung văn bản biên dịch để đọc thành tiếng:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		reloadScopeBtn,
 	)
 
 	pathCard := container.NewVBox(
@@ -367,11 +612,16 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 			outPath += ".mp3"
 		}
 
-		// Khóa giao diện và bắt đầu chạy ngầm
+		wordCount := len(strings.Fields(textToRead))
+
+		// Khóa giao diện và hiển thị tiến trình tổng hợp
 		exportBtn.Disable()
 		cancelBtn.Disable()
+		scopeSelect.Disable()
+		voiceSelect.Disable()
 		progressBar.Show()
-		statusLabel.SetText("⏳ Đang kết nối Edge-TTS và tổng hợp âm thanh MP3...")
+
+		statusLabel.SetText(fmt.Sprintf("⏳ Đang tổng hợp nội dung và khởi chạy Edge-TTS Neural (%s — %d từ)...", scopeSelect.Selected, wordCount))
 
 		voiceChosen := selectedVoiceID
 		go func() {
@@ -379,6 +629,8 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 
 			exportBtn.Enable()
 			cancelBtn.Enable()
+			scopeSelect.Enable()
+			voiceSelect.Enable()
 			progressBar.Hide()
 
 			if err != nil {
@@ -402,11 +654,13 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 
 			dialog.ShowInformation(
 				"Xuất Audio Thành Công!",
-				fmt.Sprintf("Đã xuất file âm thanh thành công!\n\n• Tệp đích: %s\n• Giọng đọc: %s\n• Dung lượng: %.2f MB\n• Số từ: %d từ",
+				fmt.Sprintf("Đã xuất file âm thanh thành công!\n\n• Tệp đích: %s\n• Phạm vi xuất bản: %s\n• Giọng đọc: %s\n• Dung lượng: %.2f MB\n• Số từ: %d từ\n• Thời lượng ước tính: %.1f phút nghe",
 					outPath,
+					scopeSelect.Selected,
 					voiceSelect.Selected,
 					fileSizeMB,
-					len(strings.Fields(textToRead)),
+					wordCount,
+					float64(wordCount)/160.0,
 				),
 				ui.window,
 			)
@@ -421,6 +675,8 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 
 	dialogBody := container.NewVScroll(container.NewVBox(
 		headerBox,
+		scopeCard,
+		widget.NewSeparator(),
 		voiceCard,
 		widget.NewSeparator(),
 		contentHeader,
@@ -436,6 +692,6 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 	))
 
 	audioDialog = dialog.NewCustomWithoutButtons("Xuất Bản Audio (Edge-TTS)", dialogBody, ui.window)
-	audioDialog.Resize(fyne.NewSize(760, 640))
+	audioDialog.Resize(fyne.NewSize(780, 680))
 	audioDialog.Show()
 }
