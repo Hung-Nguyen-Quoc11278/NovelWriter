@@ -634,6 +634,16 @@ func (s *Store) ListActs(projectID int64) ([]Act, error) {
 	return list, rows.Err()
 }
 
+func (s *Store) GetAct(actID int64) (*Act, error) {
+	var a Act
+	err := s.db.QueryRow(`SELECT id, project_id, title, position, created_at FROM acts WHERE id = ?`, actID).
+		Scan(&a.ID, &a.ProjectID, &a.Title, &a.Position, &a.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 func (s *Store) CreateAct(projectID int64, title string) (*Act, error) {
 	var nextPos int
 	_ = s.db.QueryRow(`SELECT COALESCE(MAX(position), 0) + 1 FROM acts WHERE project_id = ?`, projectID).Scan(&nextPos)
