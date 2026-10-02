@@ -323,6 +323,264 @@ func (p *TagColorSwatchPicker) SelectHex(rawHex string, notify bool) {
 	}
 }
 
+// ============================================================================
+// WIDGET Ô CHỌN THẺ VỚI MÀU CHỮ ĐỘNG (COLORED TAG CHECKBOX & CHECKGROUP)
+// ============================================================================
+
+// ColoredTagCheckbox là một widget hiển thị một ô chọn Thẻ với màu sắc tùy chỉnh.
+// Nhãn văn bản (Text Label) kế thừa và hiển thị chính xác mã màu Hex của Thẻ thông qua canvas.Text.
+type ColoredTagCheckbox struct {
+	widget.BaseWidget
+	Tag       Tag
+	Checked   bool
+	OnChanged func(checked bool)
+}
+
+// NewColoredTagCheckbox khởi tạo một ô chọn Thẻ có màu chữ và màu viền đồng bộ với mã màu của Thẻ.
+func NewColoredTagCheckbox(tag Tag, checked bool, onChanged func(checked bool)) *ColoredTagCheckbox {
+	c := &ColoredTagCheckbox{
+		Tag:       tag,
+		Checked:   checked,
+		OnChanged: onChanged,
+	}
+	c.ExtendBaseWidget(c)
+	return c
+}
+
+func (c *ColoredTagCheckbox) Tapped(_ *fyne.PointEvent) {
+	PlayUIClickSound()
+	c.Checked = !c.Checked
+	c.Refresh()
+	if c.OnChanged != nil {
+		c.OnChanged(c.Checked)
+	}
+}
+
+func (c *ColoredTagCheckbox) Cursor() desktop.Cursor {
+	return desktop.PointerCursor
+}
+
+func (c *ColoredTagCheckbox) SetChecked(checked bool) {
+	if c.Checked != checked {
+		c.Checked = checked
+		c.Refresh()
+	}
+}
+
+func (c *ColoredTagCheckbox) CreateRenderer() fyne.WidgetRenderer {
+	bgRect := canvas.NewRectangle(color.Transparent)
+	bgRect.CornerRadius = 5
+
+	checkBg := canvas.NewRectangle(color.Transparent)
+	checkBg.CornerRadius = 3
+
+	checkMark := canvas.NewText("✓", color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+	checkMark.Alignment = fyne.TextAlignCenter
+	checkMark.TextStyle = fyne.TextStyle{Bold: true}
+	checkMark.TextSize = 11
+
+	dot := canvas.NewCircle(parseHexColor(c.Tag.Color))
+
+	// Áp dụng trực tiếp mã màu Hex của Thẻ lên nhãn văn bản bằng canvas.Text
+	label := canvas.NewText("# "+c.Tag.Name, parseHexColor(c.Tag.Color))
+	label.TextStyle = fyne.TextStyle{Bold: true}
+	label.TextSize = 13
+
+	r := &coloredTagCheckboxRenderer{
+		checkbox:  c,
+		bgRect:    bgRect,
+		checkBg:   checkBg,
+		checkMark: checkMark,
+		dot:       dot,
+		label:     label,
+	}
+	r.Refresh()
+	return r
+}
+
+type coloredTagCheckboxRenderer struct {
+	checkbox  *ColoredTagCheckbox
+	bgRect    *canvas.Rectangle
+	checkBg   *canvas.Rectangle
+	checkMark *canvas.Text
+	dot       *canvas.Circle
+	label     *canvas.Text
+}
+
+func (r *coloredTagCheckboxRenderer) Layout(size fyne.Size) {
+	r.bgRect.Move(fyne.NewPos(0, 0))
+	r.bgRect.Resize(size)
+
+	boxY := (size.Height - 16) / 2
+	r.checkBg.Move(fyne.NewPos(6, boxY))
+	r.checkBg.Resize(fyne.NewSize(16, 16))
+
+	markMin := r.checkMark.MinSize()
+	r.checkMark.Move(fyne.NewPos(6+(16-markMin.Width)/2, boxY+(16-markMin.Height)/2))
+	r.checkMark.Resize(markMin)
+
+	dotY := (size.Height - 10) / 2
+	r.dot.Move(fyne.NewPos(28, dotY))
+	r.dot.Resize(fyne.NewSize(10, 10))
+
+	labelMin := r.label.MinSize()
+	labelW := size.Width - 44 - 8
+	if labelW < labelMin.Width {
+		labelW = labelMin.Width
+	}
+	r.label.Move(fyne.NewPos(44, (size.Height-labelMin.Height)/2))
+	r.label.Resize(fyne.NewSize(labelW, labelMin.Height))
+}
+
+func (r *coloredTagCheckboxRenderer) MinSize() fyne.Size {
+	labelMin := r.label.MinSize()
+	w := float32(44) + labelMin.Width + 14
+	h := labelMin.Height + 10
+	if h < 28 {
+		h = 28
+	}
+	return fyne.NewSize(w, h)
+}
+
+func (r *coloredTagCheckboxRenderer) Refresh() {
+	tagCol := parseHexColor(r.checkbox.Tag.Color)
+
+	// Nhãn chữ kế thừa chính xác mã màu Hex của Thẻ
+	r.label.Text = "# " + r.checkbox.Tag.Name
+	r.label.Color = tagCol
+	r.label.Refresh()
+
+	r.dot.FillColor = tagCol
+	r.dot.Refresh()
+
+	if r.checkbox.Checked {
+		r.bgRect.FillColor = parseHexTintColor(r.checkbox.Tag.Color, 28)
+		r.bgRect.StrokeColor = parseHexTintColor(r.checkbox.Tag.Color, 85)
+		r.bgRect.StrokeWidth = 1.0
+
+		r.checkBg.FillColor = tagCol
+		r.checkBg.StrokeColor = tagCol
+		r.checkBg.StrokeWidth = 1.0
+
+		r.checkMark.Text = "✓"
+	} else {
+		r.bgRect.FillColor = color.Transparent
+		r.bgRect.StrokeColor = color.NRGBA{R: 0, G: 0, B: 0, A: 25}
+		r.bgRect.StrokeWidth = 0.5
+
+		r.checkBg.FillColor = color.Transparent
+		r.checkBg.StrokeColor = color.NRGBA{R: 140, G: 140, B: 140, A: 200}
+		r.checkBg.StrokeWidth = 1.5
+
+		r.checkMark.Text = ""
+	}
+
+	r.bgRect.Refresh()
+	r.checkBg.Refresh()
+	r.checkMark.Refresh()
+	r.Layout(r.checkbox.Size())
+}
+
+func (r *coloredTagCheckboxRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{r.bgRect, r.checkBg, r.checkMark, r.dot, r.label}
+}
+
+func (r *coloredTagCheckboxRenderer) Destroy() {}
+
+// ColoredTagCheckGroup quản lý danh sách các ô chọn Thẻ có màu sắc động,
+// cung cấp API tương thích với CheckGroup (Selected, SetSelected, SetTags).
+type ColoredTagCheckGroup struct {
+	*fyne.Container
+	tags      []Tag
+	items     []*ColoredTagCheckbox
+	Selected  []string
+	OnChanged func(selected []string)
+}
+
+// NewColoredTagCheckGroup khởi tạo một nhóm chọn Thẻ với màu sắc văn bản tùy chỉnh.
+func NewColoredTagCheckGroup(onChanged func(selected []string)) *ColoredTagCheckGroup {
+	g := &ColoredTagCheckGroup{
+		OnChanged: onChanged,
+	}
+	emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút '+ Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+	g.Container = container.NewVBox(emptyLbl)
+	return g
+}
+
+// SetTags cập nhật danh sách Thẻ trong nhóm và tự động xây dựng lại các ô chọn có màu tương ứng.
+func (g *ColoredTagCheckGroup) SetTags(tags []Tag) {
+	g.tags = tags
+	g.rebuild()
+}
+
+// SetSelected chọn các thẻ theo danh sách tên truyền vào.
+func (g *ColoredTagCheckGroup) SetSelected(selected []string) {
+	g.Selected = append([]string{}, selected...)
+	selectedMap := make(map[string]bool, len(selected))
+	for _, s := range selected {
+		selectedMap[s] = true
+	}
+	for _, item := range g.items {
+		item.SetChecked(selectedMap[item.Tag.Name])
+	}
+}
+
+func (g *ColoredTagCheckGroup) rebuild() {
+	g.items = nil
+	g.Container.Objects = nil
+
+	if len(g.tags) == 0 {
+		emptyLbl := widget.NewLabelWithStyle("(Chưa có thẻ nào cho danh mục này. Nhấn nút '+ Thêm Thẻ...' ở trên để tạo thẻ mới)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+		g.Container.Add(emptyLbl)
+		g.Container.Refresh()
+		return
+	}
+
+	selectedMap := make(map[string]bool, len(g.Selected))
+	for _, s := range g.Selected {
+		selectedMap[s] = true
+	}
+
+	for _, t := range g.tags {
+		tag := t
+		isChecked := selectedMap[tag.Name]
+		chk := NewColoredTagCheckbox(tag, isChecked, func(checked bool) {
+			g.updateSelection(tag.Name, checked)
+		})
+		g.items = append(g.items, chk)
+		g.Container.Add(chk)
+	}
+
+	g.Container.Refresh()
+}
+
+func (g *ColoredTagCheckGroup) updateSelection(name string, checked bool) {
+	if checked {
+		found := false
+		for _, s := range g.Selected {
+			if s == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			g.Selected = append(g.Selected, name)
+		}
+	} else {
+		var newSel []string
+		for _, s := range g.Selected {
+			if s != name {
+				newSel = append(newSel, s)
+			}
+		}
+		g.Selected = newSel
+	}
+
+	if g.OnChanged != nil {
+		g.OnChanged(g.Selected)
+	}
+}
+
 const (
 	allTagsFilterLabel       = "Tất cả thẻ"
 	allCategoriesFilterLabel = "Tất cả danh mục thẻ"
@@ -381,25 +639,25 @@ type WorldBuildingHub struct {
 	charNameEntry *VietnameseEntry
 	charRoleEntry *VietnameseEntry
 	charDescEntry *VietnameseEntry
-	charTagCheck  *widget.CheckGroup
+	charTagCheck  *ColoredTagCheckGroup
 
 	// Biểu mẫu Tab 2: Địa điểm
 	locNameEntry *VietnameseEntry
 	locDescEntry *VietnameseEntry
-	locTagCheck  *widget.CheckGroup
+	locTagCheck  *ColoredTagCheckGroup
 
 	// Biểu mẫu Tab 3: Vật phẩm
 	propNameEntry *VietnameseEntry
 	propCatEntry  *VietnameseEntry
 	propDescEntry *VietnameseEntry
 	propSigEntry  *VietnameseEntry
-	propTagCheck  *widget.CheckGroup
+	propTagCheck  *ColoredTagCheckGroup
 
 	// Biểu mẫu Tab 4: Sự kiện
 	eventTitleEntry *VietnameseEntry
 	eventOrderEntry *widget.Entry
 	eventDescEntry  *VietnameseEntry
-	eventTagCheck   *widget.CheckGroup
+	eventTagCheck   *ColoredTagCheckGroup
 
 	// Biểu mẫu Quản lý Thẻ theo danh mục & Lưới ô màu trực quan (Visual Swatch Picker)
 	newTagEntry           *VietnameseEntry
@@ -411,7 +669,7 @@ type WorldBuildingHub struct {
 	tagFormColorPicker    *TagColorSwatchPicker
 	tagFormPreviewDot     *canvas.Circle
 	tagFormPreviewBg      *canvas.Rectangle
-	tagFormPreviewLabel   *widget.Label
+	tagFormPreviewLabel   *canvas.Text
 }
 
 // ShowWorldBuildingHub mở Trung tâm Quản lý Thế giới & Hệ thống Thẻ Đa năng (Multi-Tab Dialog).
@@ -574,7 +832,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 	h.charDescEntry.SetPlaceHolder("Tiểu sử, ngoại hình, tính cách, động cơ của nhân vật...")
 	h.charDescEntry.SetMinRowsVisible(4)
 
-	h.charTagCheck = widget.NewCheckGroup([]string{}, nil)
+	h.charTagCheck = NewColoredTagCheckGroup(nil)
 
 	h.charList.OnSelected = func(id widget.ListItemID) {
 		if id < 0 || id >= len(h.filteredChars) {
@@ -747,7 +1005,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 	h.locDescEntry.SetPlaceHolder("Kiến trúc, không khí, lịch sử và các chi tiết giác quan của địa điểm...")
 	h.locDescEntry.SetMinRowsVisible(5)
 
-	h.locTagCheck = widget.NewCheckGroup([]string{}, nil)
+	h.locTagCheck = NewColoredTagCheckGroup(nil)
 
 	h.locList.OnSelected = func(id widget.ListItemID) {
 		if id < 0 || id >= len(h.filteredLocs) {
@@ -919,7 +1177,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 	h.propSigEntry.SetPlaceHolder("Ý nghĩa cốt truyện, tác động đến nhân vật hoặc bí mật ẩn giấu...")
 	h.propSigEntry.SetMinRowsVisible(3)
 
-	h.propTagCheck = widget.NewCheckGroup([]string{}, nil)
+	h.propTagCheck = NewColoredTagCheckGroup(nil)
 
 	h.propList.OnSelected = func(id widget.ListItemID) {
 		if id < 0 || id >= len(h.filteredProps) {
@@ -1100,7 +1358,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 	h.eventDescEntry.SetPlaceHolder("Diễn biến chính, nguyên nhân và hệ quả của sự kiện đối với mạch truyện...")
 	h.eventDescEntry.SetMinRowsVisible(5)
 
-	h.eventTagCheck = widget.NewCheckGroup([]string{}, nil)
+	h.eventTagCheck = NewColoredTagCheckGroup(nil)
 
 	h.eventList.OnSelected = func(id widget.ListItemID) {
 		if id < 0 || id >= len(h.filteredEvents) {
@@ -1247,14 +1505,16 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 	h.tagFormHexEntry.SetPlaceHolder("#3498db")
 	h.tagFormHexEntry.SetText(DefaultTagColor)
 
-	// Huy hiệu xem trước màu sắc thẻ trực tiếp (sử dụng canvas.Rectangle & canvas.Circle)
+	// Huy hiệu xem trước màu sắc thẻ trực tiếp (sử dụng canvas.Rectangle & canvas.Circle & canvas.Text)
 	var previewDotWrap *fyne.Container
 	h.tagFormPreviewDot, previewDotWrap = newColorCircleIndicator(DefaultTagColor, 16)
 	h.tagFormPreviewBg = canvas.NewRectangle(parseHexTintColor(DefaultTagColor, 42))
 	h.tagFormPreviewBg.StrokeColor = parseHexColor(DefaultTagColor)
 	h.tagFormPreviewBg.StrokeWidth = 1.5
 	h.tagFormPreviewBg.CornerRadius = 6
-	h.tagFormPreviewLabel = widget.NewLabelWithStyle("🏷️ [Thẻ Nhân Vật] #Xem trước thẻ  (#3498db)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	h.tagFormPreviewLabel = canvas.NewText("🏷️ [Thẻ Nhân Vật] #Xem trước thẻ  (#3498db)", parseHexColor(DefaultTagColor))
+	h.tagFormPreviewLabel.TextStyle = fyne.TextStyle{Bold: true}
+	h.tagFormPreviewLabel.TextSize = 13
 
 	previewBadge := container.NewMax(
 		h.tagFormPreviewBg,
@@ -1280,7 +1540,9 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		h.tagFormPreviewBg.FillColor = parseHexTintColor(hex, 42)
 		h.tagFormPreviewBg.StrokeColor = parseHexColor(hex)
 		h.tagFormPreviewBg.Refresh()
-		h.tagFormPreviewLabel.SetText(fmt.Sprintf("🏷️ [%s] #%s  (%s)", catLabel, tagName, hex))
+		h.tagFormPreviewLabel.Text = fmt.Sprintf("🏷️ [%s] #%s  (%s)", catLabel, tagName, hex)
+		h.tagFormPreviewLabel.Color = parseHexColor(hex)
+		h.tagFormPreviewLabel.Refresh()
 	}
 
 	// Lưới ô màu trực quan (Visual Color Swatch Grid) kèm ô vuông "+" mở bảng chọn màu tùy chỉnh
@@ -1315,7 +1577,9 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 
 			_, dotWrap := newColorCircleIndicator(DefaultTagColor, 16)
 			catLbl := widget.NewLabelWithStyle("[Thẻ Nhân Vật]", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
-			nameLbl := widget.NewLabelWithStyle("#Tên thẻ", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			nameText := canvas.NewText("#Tên thẻ", parseHexColor(DefaultTagColor))
+			nameText.TextStyle = fyne.TextStyle{Bold: true}
+			nameText.TextSize = 13
 			hexLbl := widget.NewLabelWithStyle("#3498db", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 
 			editBtn := widget.NewButtonWithIcon("Chỉnh sửa thẻ", theme.DocumentCreateIcon(), nil)
@@ -1324,7 +1588,7 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 			delBtn := widget.NewButtonWithIcon("Xóa thẻ", theme.DeleteIcon(), nil)
 			delBtn.Importance = widget.DangerImportance
 
-			leftInfo := container.NewHBox(container.NewCenter(dotWrap), catLbl, nameLbl, hexLbl)
+			leftInfo := container.NewHBox(container.NewCenter(dotWrap), catLbl, nameText, hexLbl)
 			rightActions := container.NewHBox(editBtn, delBtn)
 			rowContent := container.NewBorder(nil, nil, nil, rightActions, leftInfo)
 
@@ -1353,7 +1617,7 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 					continue
 				}
 				if len(hbox.Objects) == 4 {
-					// leftInfo: [center(dotWrap), catLbl, nameLbl, hexLbl]
+					// leftInfo: [center(dotWrap), catLbl, nameText, hexLbl]
 					if centerWrap, ok := hbox.Objects[0].(*fyne.Container); ok && len(centerWrap.Objects) > 0 {
 						if gridWrap, ok := centerWrap.Objects[0].(*fyne.Container); ok && len(gridWrap.Objects) > 0 {
 							if circle, ok := gridWrap.Objects[0].(*canvas.Circle); ok {
@@ -1365,8 +1629,10 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 					if catLbl, ok := hbox.Objects[1].(*widget.Label); ok {
 						catLbl.SetText(fmt.Sprintf("[%s]", EntityTypeTagLabel(tag.EntityType)))
 					}
-					if nameLbl, ok := hbox.Objects[2].(*widget.Label); ok {
-						nameLbl.SetText(fmt.Sprintf("#%s", tag.Name))
+					if nameText, ok := hbox.Objects[2].(*canvas.Text); ok {
+						nameText.Text = fmt.Sprintf("#%s", tag.Name)
+						nameText.Color = parseHexColor(tagColor)
+						nameText.Refresh()
 					}
 					if hexLbl, ok := hbox.Objects[3].(*widget.Label); ok {
 						hexLbl.SetText(fmt.Sprintf("(%s)", tagColor))
@@ -1513,7 +1779,7 @@ func (h *WorldBuildingHub) clearTagForm() {
 }
 
 // showCreateScopedTagDialog mở hộp thoại tạo nhanh một Thẻ có màu sắc cho đúng Danh mục thực thể (EntityType) đang mở.
-func (h *WorldBuildingHub) showCreateScopedTagDialog(entityType EntityType, targetCheckGroup *widget.CheckGroup) {
+func (h *WorldBuildingHub) showCreateScopedTagDialog(entityType EntityType, targetCheckGroup *ColoredTagCheckGroup) {
 	catLabel := EntityTypeTagLabel(entityType)
 
 	nameEntry := NewVietEntry()
@@ -1682,22 +1948,18 @@ func (h *WorldBuildingHub) reloadAllData() {
 	propTagNames, propFilterOpts := buildTagOptionsAndFilter(h.propTags)
 	eventTagNames, eventFilterOpts := buildTagOptionsAndFilter(h.eventTags)
 
-	// Cập nhật danh sách chọn Thẻ riêng biệt trong biểu mẫu của từng Tab
+	// Cập nhật danh sách chọn Thẻ riêng biệt trong biểu mẫu của từng Tab với nhãn màu Hex động
 	if h.charTagCheck != nil {
-		h.charTagCheck.Options = charTagNames
-		h.charTagCheck.Refresh()
+		h.charTagCheck.SetTags(h.charTags)
 	}
 	if h.locTagCheck != nil {
-		h.locTagCheck.Options = locTagNames
-		h.locTagCheck.Refresh()
+		h.locTagCheck.SetTags(h.locTags)
 	}
 	if h.propTagCheck != nil {
-		h.propTagCheck.Options = propTagNames
-		h.propTagCheck.Refresh()
+		h.propTagCheck.SetTags(h.propTags)
 	}
 	if h.eventTagCheck != nil {
-		h.eventTagCheck.Options = eventTagNames
-		h.eventTagCheck.Refresh()
+		h.eventTagCheck.SetTags(h.eventTags)
 	}
 
 	// Cập nhật bộ lọc theo Thẻ riêng biệt của từng Tab

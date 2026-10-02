@@ -37,10 +37,10 @@ export const INITIAL_PROJECTS: Project[] = [
     targetWords: 45000,
     updatedAt: '2026-10-01T12:00:00Z',
     tags: [
-      { id: 1, bookId: 1, name: 'Cổ vật' },
-      { id: 2, bookId: 1, name: 'Khu vực cấm' },
-      { id: 3, bookId: 1, name: 'Thiên giới' },
-      { id: 4, bookId: 1, name: 'Bí mật triều đình' },
+      { id: 1, bookId: 1, name: 'Cổ vật', color: '#e74c3c' },
+      { id: 2, bookId: 1, name: 'Khu vực cấm', color: '#9b59b6' },
+      { id: 3, bookId: 1, name: 'Thiên giới', color: '#3498db' },
+      { id: 4, bookId: 1, name: 'Bí mật triều đình', color: '#f39c12' },
     ],
     characters: [
       {

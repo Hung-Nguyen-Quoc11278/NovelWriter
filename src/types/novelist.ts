@@ -30,6 +30,7 @@ export interface Tag {
   id: number;
   bookId: number;
   name: string;
+  color?: string;
 }
 
 export interface Character {

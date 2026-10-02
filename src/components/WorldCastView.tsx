@@ -167,6 +167,37 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
   const filteredProps = propsList.filter((p) => matchesTagFilter(p.tagIds));
   const filteredEvents = eventsList.filter((ev) => matchesTagFilter(ev.tagIds));
 
+  const renderTagButton = (
+    t: Tag,
+    active: boolean,
+    onClick: () => void,
+    size: 'sm' | 'xs' = 'sm'
+  ) => {
+    const col = t.color || '#3498db';
+    return (
+      <button
+        key={t.id}
+        type="button"
+        onClick={onClick}
+        style={{
+          color: col,
+          borderColor: active ? col : '#D6D0C4',
+          backgroundColor: active ? `${col}18` : '#FAF7F2',
+        }}
+        className={`inline-flex items-center gap-1.5 font-medium border rounded transition-all cursor-pointer ${
+          size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-2 py-0.5 text-[11px]'
+        }`}
+      >
+        <span
+          className="w-1.5 h-1.5 rounded-full inline-block"
+          style={{ backgroundColor: col }}
+        />
+        <span>#{t.name}</span>
+        {active && <Check className="w-3 h-3 ml-0.5" />}
+      </button>
+    );
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-[#FAF7F2] px-8 py-8">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -310,25 +341,14 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-[#57534E] font-medium">Gắn thẻ:</span>
-                  {tags.map((t) => {
-                    const active = newCharTags.includes(t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() =>
-                          setNewCharTags((prev) => toggleTagId(prev, t.id))
-                        }
-                        className={`px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
-                          active
-                            ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                            : 'bg-[#FAF7F2] text-[#57534E] border-[#D6D0C4]'
-                        }`}
-                      >
-                        #{t.name}
-                      </button>
-                    );
-                  })}
+                  {tags.map((t) =>
+                    renderTagButton(
+                      t,
+                      newCharTags.includes(t.id),
+                      () => setNewCharTags((prev) => toggleTagId(prev, t.id)),
+                      'sm'
+                    )
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -394,28 +414,18 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                     {/* Gắn/bỏ gắn thẻ trực tiếp */}
                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
                       <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                      {tags.map((t) => {
-                        const hasTag = charTagIds.includes(t.id);
-                        return (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() =>
-                              onUpdateCharacter({
-                                ...char,
-                                tagIds: toggleTagId(charTagIds, t.id),
-                              })
-                            }
-                            className={`px-2 py-0.5 text-[11px] border transition-colors cursor-pointer ${
-                              hasTag
-                                ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                                : 'bg-[#F3EFE6] text-[#78716C] border-[#D6D0C4]'
-                            }`}
-                          >
-                            #{t.name}
-                          </button>
-                        );
-                      })}
+                      {tags.map((t) =>
+                        renderTagButton(
+                          t,
+                          charTagIds.includes(t.id),
+                          () =>
+                            onUpdateCharacter({
+                              ...char,
+                              tagIds: toggleTagId(charTagIds, t.id),
+                            }),
+                          'xs'
+                        )
+                      )}
                     </div>
 
                     <div className="pt-2 border-t border-[#E6E0D4] flex flex-wrap items-center justify-between gap-2 text-xs text-[#78716C]">
@@ -471,25 +481,14 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-[#57534E] font-medium">Gắn thẻ:</span>
-                  {tags.map((t) => {
-                    const active = newLocTags.includes(t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() =>
-                          setNewLocTags((prev) => toggleTagId(prev, t.id))
-                        }
-                        className={`px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
-                          active
-                            ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                            : 'bg-[#FAF7F2] text-[#57534E] border-[#D6D0C4]'
-                        }`}
-                      >
-                        #{t.name}
-                      </button>
-                    );
-                  })}
+                  {tags.map((t) =>
+                    renderTagButton(
+                      t,
+                      newLocTags.includes(t.id),
+                      () => setNewLocTags((prev) => toggleTagId(prev, t.id)),
+                      'sm'
+                    )
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -537,28 +536,18 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                     />
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                      {tags.map((t) => {
-                        const hasTag = locTagIds.includes(t.id);
-                        return (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() =>
-                              onUpdateLocation({
-                                ...loc,
-                                tagIds: toggleTagId(locTagIds, t.id),
-                              })
-                            }
-                            className={`px-2 py-0.5 text-[11px] border transition-colors cursor-pointer ${
-                              hasTag
-                                ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                                : 'bg-[#F3EFE6] text-[#78716C] border-[#D6D0C4]'
-                            }`}
-                          >
-                            #{t.name}
-                          </button>
-                        );
-                      })}
+                      {tags.map((t) =>
+                        renderTagButton(
+                          t,
+                          locTagIds.includes(t.id),
+                          () =>
+                            onUpdateLocation({
+                              ...loc,
+                              tagIds: toggleTagId(locTagIds, t.id),
+                            }),
+                          'xs'
+                        )
+                      )}
                     </div>
                     <div className="pt-2 border-t border-[#E6E0D4] text-xs text-[#78716C] font-mono-code">
                       Sử dụng trong <strong>{scenesHere.length}</strong> cảnh
@@ -615,25 +604,14 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-[#57534E] font-medium">Gắn thẻ:</span>
-                  {tags.map((t) => {
-                    const active = newPropTags.includes(t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() =>
-                          setNewPropTags((prev) => toggleTagId(prev, t.id))
-                        }
-                        className={`px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
-                          active
-                            ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                            : 'bg-[#FAF7F2] text-[#57534E] border-[#D6D0C4]'
-                        }`}
-                      >
-                        #{t.name}
-                      </button>
-                    );
-                  })}
+                  {tags.map((t) =>
+                    renderTagButton(
+                      t,
+                      newPropTags.includes(t.id),
+                      () => setNewPropTags((prev) => toggleTagId(prev, t.id)),
+                      'sm'
+                    )
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -684,28 +662,18 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                     {onUpdateProp && (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                        {tags.map((t) => {
-                          const hasTag = propTagIds.includes(t.id);
-                          return (
-                            <button
-                              key={t.id}
-                              type="button"
-                              onClick={() =>
-                                onUpdateProp({
-                                  ...prop,
-                                  tagIds: toggleTagId(propTagIds, t.id),
-                                })
-                              }
-                              className={`px-2 py-0.5 text-[11px] border transition-colors cursor-pointer ${
-                                hasTag
-                                  ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                                  : 'bg-[#F3EFE6] text-[#78716C] border-[#D6D0C4]'
-                              }`}
-                            >
-                              #{t.name}
-                            </button>
-                          );
-                        })}
+                        {tags.map((t) =>
+                          renderTagButton(
+                            t,
+                            propTagIds.includes(t.id),
+                            () =>
+                              onUpdateProp({
+                                ...prop,
+                                tagIds: toggleTagId(propTagIds, t.id),
+                              }),
+                            'xs'
+                          )
+                        )}
                       </div>
                     )}
                     <div className="pt-2 border-t border-[#E6E0D4] text-xs text-[#78716C] font-mono-code">
@@ -819,28 +787,18 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                     {onUpdateEvent && (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[11px] text-[#78716C] mr-1">Thẻ:</span>
-                        {tags.map((t) => {
-                          const hasTag = evTagIds.includes(t.id);
-                          return (
-                            <button
-                              key={t.id}
-                              type="button"
-                              onClick={() =>
-                                onUpdateEvent({
-                                  ...ev,
-                                  tagIds: toggleTagId(evTagIds, t.id),
-                                })
-                              }
-                              className={`px-2 py-0.5 text-[11px] border transition-colors cursor-pointer ${
-                                hasTag
-                                  ? 'bg-[#8B3A2B] text-[#FAF7F2] border-[#8B3A2B]'
-                                  : 'bg-[#F3EFE6] text-[#78716C] border-[#D6D0C4]'
-                              }`}
-                            >
-                              #{t.name}
-                            </button>
-                          );
-                        })}
+                        {tags.map((t) =>
+                          renderTagButton(
+                            t,
+                            evTagIds.includes(t.id),
+                            () =>
+                              onUpdateEvent({
+                                ...ev,
+                                tagIds: toggleTagId(evTagIds, t.id),
+                              }),
+                            'xs'
+                          )
+                        )}
                       </div>
                     )}
                     <div className="pt-2 border-t border-[#E6E0D4] text-xs text-[#78716C] font-mono-code">
@@ -869,8 +827,14 @@ export const WorldCastView: React.FC<WorldCastViewProps> = ({
                   className="flex items-center justify-between bg-[#F3EFE6] border border-[#D6D0C4] px-4 py-3"
                 >
                   <div className="flex items-center gap-2">
-                    <TagIcon className="w-4 h-4 text-[#8B3A2B]" />
-                    <span className="font-mono-code text-sm font-semibold text-[#1C1B18]">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
+                      style={{ backgroundColor: t.color || '#3498db' }}
+                    />
+                    <span
+                      className="font-mono-code text-sm font-semibold"
+                      style={{ color: t.color || '#3498db' }}
+                    >
                       #{t.name}
                     </span>
                   </div>
