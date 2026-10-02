@@ -354,10 +354,8 @@ func ExportManuscriptTXT(ms *FilteredManuscript, opts ExportOptions) ([]byte, er
 				if opts.IncludeSceneTitle && strings.TrimSpace(sc.Title) != "" {
 					b.WriteString(fmt.Sprintf("[%s]\n\n", sc.Title))
 				}
-				paragraphs := splitParagraphs(sc.Content)
-				for _, p := range paragraphs {
-					b.WriteString("    " + p + "\n\n")
-				}
+				blocks := ParseRichProseBlocks(sc.Content)
+				b.WriteString(RenderRichBlocksPlainText(blocks))
 				if i < len(expCh.Scenes)-1 {
 					b.WriteString("                    * * *\n\n")
 				}
@@ -398,7 +396,7 @@ func ExportManuscriptMarkdownWithOptions(ms *FilteredManuscript, opts ExportOpti
 					b.WriteString(fmt.Sprintf("#### %s\n\n", sc.Title))
 				}
 				if strings.TrimSpace(sc.Content) != "" {
-					b.WriteString(strings.TrimSpace(sc.Content) + "\n\n")
+					b.WriteString(NormalizeRichProseToMarkdown(sc.Content) + "\n\n")
 				}
 				if i < len(expCh.Scenes)-1 {
 					b.WriteString("* * *\n\n")
@@ -427,7 +425,11 @@ func ExportManuscriptHTMLWithOptions(ms *FilteredManuscript, opts ExportOptions)
   h2 { margin-top: 3rem; border-bottom: 1px solid #D6D0C4; padding-bottom: 0.4rem; }
   h3 { margin-top: 2rem; color: #3F3C36; }
   h4 { margin-top: 1.5rem; color: #78716C; font-weight: normal; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85rem; }
+  h5.sub-heading { margin-top: 1.4rem; margin-bottom: 0.6rem; color: #2D2A24; font-size: 1.1rem; font-weight: bold; }
   p { margin: 1.1rem 0; text-indent: 1.5rem; text-align: justify; }
+  blockquote { margin: 1.2rem 1.5rem; padding: 0.5rem 1.2rem; border-left: 3px solid #8B3A2B; background: rgba(139, 58, 43, 0.05); font-style: italic; color: #3F3C36; }
+  blockquote p { text-indent: 0; margin: 0.4rem 0; }
+  u { text-decoration: underline; text-underline-offset: 2px; }
   hr.scene-break { border: none; text-align: center; margin: 2rem 0; }
   hr.scene-break::after { content: "* * *"; color: #78716C; letter-spacing: 0.4em; }
 </style>
@@ -454,9 +456,8 @@ func ExportManuscriptHTMLWithOptions(ms *FilteredManuscript, opts ExportOptions)
 				if opts.IncludeSceneTitle && strings.TrimSpace(sc.Title) != "" {
 					b.WriteString(fmt.Sprintf("<h4>%s</h4>\n", html.EscapeString(sc.Title)))
 				}
-				for _, p := range splitParagraphs(sc.Content) {
-					b.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(p)))
-				}
+				blocks := ParseRichProseBlocks(sc.Content)
+				b.WriteString(RenderRichBlocksHTML(blocks, false, "    "))
 				if i < len(expCh.Scenes)-1 {
 					b.WriteString("<hr class=\"scene-break\">\n")
 				}
@@ -558,9 +559,34 @@ func ExportManuscriptODT(ms *FilteredManuscript, opts ExportOptions) ([]byte, er
       <style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0.25cm" fo:text-indent="1.0cm" fo:text-align="justify"/>
       <style:text-properties fo:font-size="12pt"/>
     </style:style>
+    <style:style style:name="Block_20_Quote" style:display-name="Block Quote" style:family="paragraph">
+      <style:paragraph-properties fo:margin-left="1.2cm" fo:margin-right="0.8cm" fo:margin-top="0.2cm" fo:margin-bottom="0.3cm" fo:padding-left="0.35cm" fo:border-left="2pt solid #8B3A2B"/>
+      <style:text-properties fo:font-size="11.5pt" fo:font-style="italic" fo:color="#3F3C36"/>
+    </style:style>
     <style:style style:name="SceneSeparator" style:family="paragraph">
       <style:paragraph-properties fo:text-align="center" fo:margin-top="0.4cm" fo:margin-bottom="0.4cm"/>
       <style:text-properties fo:font-size="11pt" fo:color="#78716C"/>
+    </style:style>
+    <style:style style:name="TBold" style:family="text">
+      <style:text-properties fo:font-weight="bold"/>
+    </style:style>
+    <style:style style:name="TItalic" style:family="text">
+      <style:text-properties fo:font-style="italic"/>
+    </style:style>
+    <style:style style:name="TBoldItalic" style:family="text">
+      <style:text-properties fo:font-weight="bold" fo:font-style="italic"/>
+    </style:style>
+    <style:style style:name="TUnderline" style:family="text">
+      <style:text-properties style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"/>
+    </style:style>
+    <style:style style:name="TBoldUnderline" style:family="text">
+      <style:text-properties fo:font-weight="bold" style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"/>
+    </style:style>
+    <style:style style:name="TItalicUnderline" style:family="text">
+      <style:text-properties fo:font-style="italic" style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"/>
+    </style:style>
+    <style:style style:name="TBoldItalicUnderline" style:family="text">
+      <style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"/>
     </style:style>
   </office:styles>
 </office:document-styles>`
@@ -598,9 +624,8 @@ func ExportManuscriptODT(ms *FilteredManuscript, opts ExportOptions) ([]byte, er
 					content.WriteString(fmt.Sprintf(`      <text:h text:style-name="Heading_20_3" text:outline-level="3">%s</text:h>`+"\n",
 						escapeXML(sc.Title)))
 				}
-				for _, p := range splitParagraphs(sc.Content) {
-					content.WriteString(fmt.Sprintf(`      <text:p text:style-name="Text_20_body">%s</text:p>`+"\n", escapeXML(p)))
-				}
+				blocks := ParseRichProseBlocks(sc.Content)
+				content.WriteString(RenderRichBlocksODT(blocks))
 				if i < len(expCh.Scenes)-1 {
 					content.WriteString(`      <text:p text:style-name="SceneSeparator">* * *</text:p>` + "\n")
 				}
@@ -701,6 +726,25 @@ p {
   margin: 0.6em 0;
   text-align: justify;
 }
+blockquote {
+  margin: 1em 1.4em;
+  padding-left: 1em;
+  border-left: 3px solid #8B3A2B;
+  font-style: italic;
+  color: #3F3C36;
+}
+blockquote p {
+  text-indent: 0;
+}
+h4.sub-heading {
+  font-size: 1.05em;
+  font-weight: bold;
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+}
+.underline-span {
+  text-decoration: underline;
+}
 .scene-break {
   text-align: center;
   letter-spacing: 0.35em;
@@ -770,9 +814,8 @@ p {
 				if opts.IncludeSceneTitle && strings.TrimSpace(sc.Title) != "" {
 					chBuf.WriteString(`  <h3 class="scene-title">` + escapeXML(sc.Title) + `</h3>` + "\n")
 				}
-				for _, p := range splitParagraphs(sc.Content) {
-					chBuf.WriteString(`  <p>` + escapeXML(p) + `</p>` + "\n")
-				}
+				blocks := ParseRichProseBlocks(sc.Content)
+				chBuf.WriteString(RenderRichBlocksHTML(blocks, true, "  "))
 				if i < len(expCh.Scenes)-1 {
 					chBuf.WriteString(`  <div class="scene-break">* * *</div>` + "\n")
 				}
@@ -1228,6 +1271,129 @@ func ExportManuscriptPDF(ms *FilteredManuscript, opts ExportOptions) ([]byte, er
 		curY -= (lineHeight - fontSize) + gapAfter
 	}
 
+	drawRichBlockPDF := func(block RichBlock, baseFontSize float64) {
+		switch block.Kind {
+		case RichBlockDivider:
+			curY -= 4.0
+			drawLine("* * *", 11.0, 0, true, 8.0)
+			return
+		case RichBlockHeading:
+			curY -= 4.0
+			ensureSpace(26.0)
+			headingSpans := make([]RichSpan, len(block.Spans))
+			for i, sp := range block.Spans {
+				sp.Bold = true
+				headingSpans[i] = sp
+			}
+			lines := wrapRichSpansPt(fontMetrics, headingSpans, baseFontSize+1.5, usableW)
+			for idx, ln := range lines {
+				gap := 0.0
+				if idx == len(lines)-1 {
+					gap = 5.0
+				}
+				lineHeight := (baseFontSize + 1.5) * 1.45
+				ensureSpace(lineHeight)
+				curY -= (baseFontSize + 1.5)
+				pageIdx := len(pages) - 1
+				curX := marginLeft
+				for _, seg := range ln {
+					hexStr := encodeHexGIDs(seg.Text)
+					segW := fontMetrics.measureStringPt(seg.Text, baseFontSize+1.5)
+					pages[pageIdx].WriteString(fmt.Sprintf("BT /F1 %.2f Tf 2 Tr 0.35 w %.2f %.2f Td %s Tj 0 Tr ET\n",
+						baseFontSize+1.5, curX, curY, hexStr))
+					curX += segW
+				}
+				curY -= (lineHeight - (baseFontSize + 1.5)) + gap
+			}
+			return
+		case RichBlockQuote:
+			quoteIndent := 22.0
+			quoteSpans := make([]RichSpan, len(block.Spans))
+			for i, sp := range block.Spans {
+				sp.Italic = true
+				quoteSpans[i] = sp
+			}
+			lines := wrapRichSpansPt(fontMetrics, quoteSpans, baseFontSize, usableW-quoteIndent-10.0)
+			for idx, ln := range lines {
+				gap := 0.0
+				if idx == len(lines)-1 {
+					gap = 6.0
+				}
+				lineHeight := baseFontSize * 1.45
+				ensureSpace(lineHeight)
+				topBarY := curY - 1.0
+				curY -= baseFontSize
+				botBarY := curY - 3.0
+				pageIdx := len(pages) - 1
+				// Vẽ thanh dọc bên trái cho khối Trích dẫn (Blockquote)
+				barX := marginLeft + 12.0
+				pages[pageIdx].WriteString(fmt.Sprintf("q 1.5 w 0.55 0.23 0.17 RG %.2f %.2f m %.2f %.2f l S Q\n",
+					barX, topBarY, barX, botBarY))
+
+				curX := marginLeft + quoteIndent
+				for _, seg := range ln {
+					hexStr := encodeHexGIDs(seg.Text)
+					segW := fontMetrics.measureStringPt(seg.Text, baseFontSize)
+					if seg.Bold {
+						pages[pageIdx].WriteString(fmt.Sprintf("BT /F1 %.2f Tf 2 Tr 0.32 w 1 0 0.20 1 %.2f %.2f Tm %s Tj 0 Tr ET\n",
+							baseFontSize, curX, curY, hexStr))
+					} else {
+						pages[pageIdx].WriteString(fmt.Sprintf("BT /F1 %.2f Tf 1 0 0.20 1 %.2f %.2f Tm %s Tj ET\n",
+							baseFontSize, curX, curY, hexStr))
+					}
+					if seg.Underline {
+						pages[pageIdx].WriteString(fmt.Sprintf("q 0.6 w %.2f %.2f m %.2f %.2f l S Q\n",
+							curX, curY-2.0, curX+segW, curY-2.0))
+					}
+					curX += segW
+				}
+				curY -= (lineHeight - baseFontSize) + gap
+			}
+			return
+		default: // RichBlockParagraph
+			firstLineIndent := 18.0
+			lines := wrapRichSpansFirstLinePt(fontMetrics, block.Spans, baseFontSize, usableW, firstLineIndent)
+			for idx, ln := range lines {
+				indent := 0.0
+				if idx == 0 {
+					indent = firstLineIndent
+				}
+				gap := 0.0
+				if idx == len(lines)-1 {
+					gap = 5.0
+				}
+				lineHeight := baseFontSize * 1.45
+				ensureSpace(lineHeight)
+				curY -= baseFontSize
+				pageIdx := len(pages) - 1
+				curX := marginLeft + indent
+				for _, seg := range ln {
+					hexStr := encodeHexGIDs(seg.Text)
+					segW := fontMetrics.measureStringPt(seg.Text, baseFontSize)
+					if seg.Bold && seg.Italic {
+						pages[pageIdx].WriteString(fmt.Sprintf("BT /F1 %.2f Tf 2 Tr 0.32 w 1 0 0.20 1 %.2f %.2f Tm %s Tj 0 Tr ET\n",
+							baseFontSize, curX, curY, hexStr))
+					} else if seg.Bold {
+						pages[pageIdx].WriteString(fmt.Sprintf("BT /F1 %.2f Tf 2 Tr 0.32 w %.2f %.2f Td %s Tj 0 Tr ET\n",
+							baseFontSize, curX, curY, hexStr))
+					} else if seg.Italic {
+						pages[pageIdx].WriteString(fmt.Sprintf("BT /F1 %.2f Tf 1 0 0.20 1 %.2f %.2f Tm %s Tj ET\n",
+							baseFontSize, curX, curY, hexStr))
+					} else {
+						pages[pageIdx].WriteString(fmt.Sprintf("BT /F1 %.2f Tf %.2f %.2f Td %s Tj ET\n",
+							baseFontSize, curX, curY, hexStr))
+					}
+					if seg.Underline {
+						pages[pageIdx].WriteString(fmt.Sprintf("q 0.6 w %.2f %.2f m %.2f %.2f l S Q\n",
+							curX, curY-2.0, curX+segW, curY-2.0))
+					}
+					curX += segW
+				}
+				curY -= (lineHeight - baseFontSize) + gap
+			}
+		}
+	}
+
 	drawWrappedBlock := func(text string, fontSize float64, firstLineIndent float64, centered bool, blockGap float64) {
 		lines := fontMetrics.wrapTextPt(text, fontSize, usableW-firstLineIndent)
 		for idx, ln := range lines {
@@ -1255,7 +1421,7 @@ func ExportManuscriptPDF(ms *FilteredManuscript, opts ExportOptions) ([]byte, er
 		drawWrappedBlock("Tóm tắt: "+strings.TrimSpace(ms.Project.Synopsis), 10.5, 0, false, 16.0)
 	}
 
-	// Nội dung Hồi -> Chương -> Cảnh
+	// Nội dung Hồi -> Chương -> Cảnh (Bảo toàn đầy đủ định dạng Rich Text: In đậm, In nghiêng, Gạch chân, Trích dẫn)
 	for _, expAct := range ms.Acts {
 		curY -= 10.0
 		ensureSpace(45.0)
@@ -1271,8 +1437,9 @@ func ExportManuscriptPDF(ms *FilteredManuscript, opts ExportOptions) ([]byte, er
 					ensureSpace(28.0)
 					drawWrappedBlock("["+sc.Title+"]", 10.5, 0, false, 4.0)
 				}
-				for _, p := range splitParagraphs(sc.Content) {
-					drawWrappedBlock(p, 11.5, 18.0, false, 5.0)
+				richBlocks := ParseRichProseBlocks(sc.Content)
+				for _, blk := range richBlocks {
+					drawRichBlockPDF(blk, 11.5)
 				}
 				if i < len(expCh.Scenes)-1 {
 					curY -= 4.0
@@ -1740,3 +1907,488 @@ func writeZipFile(zw *zip.Writer, name string, data []byte) error {
 	_, err = w.Write(data)
 	return err
 }
+
+// ==================== BỘ PHÂN TÍCH ĐỊNH DẠNG VĂN BẢN PHONG PHÚ (RICH TEXT AST PARSER) ====================
+
+// RichBlockKind phân loại khối văn bản trong cảnh (Đoạn văn thường, Trích dẫn, Tiêu đề phụ, Ngắt cảnh).
+type RichBlockKind string
+
+const (
+	RichBlockParagraph RichBlockKind = "paragraph"
+	RichBlockQuote     RichBlockKind = "blockquote"
+	RichBlockHeading   RichBlockKind = "heading"
+	RichBlockDivider   RichBlockKind = "divider"
+)
+
+// RichSpan đại diện cho một phân đoạn văn bản nội dòng kèm thuộc tính In đậm, In nghiêng, Gạch chân.
+type RichSpan struct {
+	Text      string
+	Bold      bool
+	Italic    bool
+	Underline bool
+}
+
+// RichBlock đại diện cho một khối đoạn văn đã được phân tích cấu trúc Rich Text.
+type RichBlock struct {
+	Kind  RichBlockKind
+	Raw   string
+	Spans []RichSpan
+}
+
+// ParseRichProseBlocks phân tích nội dung cảnh thành danh sách các khối RichBlock
+// (nhận diện đoạn trích dẫn "> ...", tiêu đề phụ "### ...", dấu ngắt cảnh "* * *" và các thẻ inline).
+func ParseRichProseBlocks(content string) []RichBlock {
+	rawParagraphs := splitParagraphs(content)
+	blocks := make([]RichBlock, 0, len(rawParagraphs))
+
+	for _, p := range rawParagraphs {
+		clean := strings.TrimSpace(p)
+		if clean == "" {
+			continue
+		}
+
+		// 1. Dấu ngắt cảnh (* * *, ***, ---)
+		if clean == "* * *" || clean == "***" || clean == "---" {
+			blocks = append(blocks, RichBlock{
+				Kind: RichBlockDivider,
+				Raw:  "* * *",
+			})
+			continue
+		}
+
+		// 2. Khối Trích dẫn (Blockquote: bắt đầu bằng "> " hoặc thẻ <blockquote>...</blockquote>)
+		if strings.HasPrefix(clean, ">") {
+			quoteBody := strings.TrimSpace(strings.TrimPrefix(clean, ">"))
+			blocks = append(blocks, RichBlock{
+				Kind:  RichBlockQuote,
+				Raw:   quoteBody,
+				Spans: ParseInlineRichSpans(quoteBody),
+			})
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(clean), "<blockquote>") && strings.HasSuffix(strings.ToLower(clean), "</blockquote>") {
+			quoteBody := strings.TrimSpace(clean[len("<blockquote>") : len(clean)-len("</blockquote>")])
+			blocks = append(blocks, RichBlock{
+				Kind:  RichBlockQuote,
+				Raw:   quoteBody,
+				Spans: ParseInlineRichSpans(quoteBody),
+			})
+			continue
+		}
+
+		// 3. Tiêu đề phụ trong cảnh (#, ##, ###, ####)
+		if strings.HasPrefix(clean, "#") {
+			trimmedHashes := strings.TrimLeft(clean, "#")
+			if strings.HasPrefix(trimmedHashes, " ") {
+				headingBody := strings.TrimSpace(trimmedHashes)
+				blocks = append(blocks, RichBlock{
+					Kind:  RichBlockHeading,
+					Raw:   headingBody,
+					Spans: ParseInlineRichSpans(headingBody),
+				})
+				continue
+			}
+		}
+
+		// 4. Đoạn văn xuôi thông thường
+		blocks = append(blocks, RichBlock{
+			Kind:  RichBlockParagraph,
+			Raw:   clean,
+			Spans: ParseInlineRichSpans(clean),
+		})
+	}
+
+	return blocks
+}
+
+// ParseInlineRichSpans phân tích cú pháp định dạng nội dòng (Inline Rich Text):
+//   - In đậm + In nghiêng: ***chữ***
+//   - In đậm: **chữ**, __chữ__, <b>chữ</b>, <strong>chữ</strong>
+//   - In nghiêng: *chữ*, _chữ_, <i>chữ</i>, <em>chữ</em>
+//   - Gạch chân / Ghi chú: <u>chữ</u>, ++chữ++, <ins>chữ</ins>
+func ParseInlineRichSpans(input string) []RichSpan {
+	if input == "" {
+		return nil
+	}
+
+	var spans []RichSpan
+	var buf strings.Builder
+	bold := false
+	italic := false
+	underline := false
+
+	flushBuf := func() {
+		if buf.Len() > 0 {
+			spans = append(spans, RichSpan{
+				Text:      buf.String(),
+				Bold:      bold,
+				Italic:    italic,
+				Underline: underline,
+			})
+			buf.Reset()
+		}
+	}
+
+	i := 0
+	n := len(input)
+	for i < n {
+		rem := input[i:]
+		lowerRem := strings.ToLower(rem)
+
+		switch {
+		case strings.HasPrefix(rem, "***"):
+			flushBuf()
+			bold = !bold
+			italic = !italic
+			i += 3
+			continue
+		case strings.HasPrefix(rem, "**") || strings.HasPrefix(rem, "__"):
+			flushBuf()
+			bold = !bold
+			i += 2
+			continue
+		case strings.HasPrefix(rem, "++"):
+			flushBuf()
+			underline = !underline
+			i += 2
+			continue
+		case strings.HasPrefix(lowerRem, "<b>"):
+			flushBuf()
+			bold = true
+			i += 3
+			continue
+		case strings.HasPrefix(lowerRem, "</b>"):
+			flushBuf()
+			bold = false
+			i += 4
+			continue
+		case strings.HasPrefix(lowerRem, "<strong>"):
+			flushBuf()
+			bold = true
+			i += 8
+			continue
+		case strings.HasPrefix(lowerRem, "</strong>"):
+			flushBuf()
+			bold = false
+			i += 9
+			continue
+		case strings.HasPrefix(lowerRem, "<i>"):
+			flushBuf()
+			italic = true
+			i += 3
+			continue
+		case strings.HasPrefix(lowerRem, "</i>"):
+			flushBuf()
+			italic = false
+			i += 4
+			continue
+		case strings.HasPrefix(lowerRem, "<em>"):
+			flushBuf()
+			italic = true
+			i += 4
+			continue
+		case strings.HasPrefix(lowerRem, "</em>"):
+			flushBuf()
+			italic = false
+			i += 5
+			continue
+		case strings.HasPrefix(lowerRem, "<u>"):
+			flushBuf()
+			underline = true
+			i += 3
+			continue
+		case strings.HasPrefix(lowerRem, "</u>"):
+			flushBuf()
+			underline = false
+			i += 4
+			continue
+		case strings.HasPrefix(lowerRem, "<ins>"):
+			flushBuf()
+			underline = true
+			i += 5
+			continue
+		case strings.HasPrefix(lowerRem, "</ins>"):
+			flushBuf()
+			underline = false
+			i += 6
+			continue
+		case rem[0] == '*' || rem[0] == '_':
+			flushBuf()
+			italic = !italic
+			i++
+			continue
+		}
+
+		r, width := utf8.DecodeRuneInString(rem)
+		buf.WriteRune(r)
+		i += width
+	}
+	flushBuf()
+
+	if len(spans) == 0 {
+		return []RichSpan{{Text: input}}
+	}
+	return spans
+}
+
+// ConvertRichProseToFyneMarkdown chuyển đổi văn bản có chứa thẻ <u>, <b>, <i> sang Markdown chuẩn cho widget.RichText của Fyne.
+func ConvertRichProseToFyneMarkdown(raw string) string {
+	replacer := strings.NewReplacer(
+		"<b>", "**", "</b>", "**",
+		"<strong>", "**", "</strong>", "**",
+		"<i>", "*", "</i>", "*",
+		"<em>", "*", "</em>", "*",
+		"<u>", "_", "</u>", "_",
+	)
+	return replacer.Replace(raw)
+}
+
+// NormalizeRichProseToMarkdown chuẩn hóa văn bản hỗn hợp (Markdown + thẻ HTML inline) về cú pháp Markdown sạch cho tệp .md.
+func NormalizeRichProseToMarkdown(raw string) string {
+	blocks := ParseRichProseBlocks(raw)
+	var out []string
+	for _, blk := range blocks {
+		switch blk.Kind {
+		case RichBlockDivider:
+			out = append(out, "* * *")
+		case RichBlockHeading:
+			out = append(out, "### "+renderSpansMarkdown(blk.Spans))
+		case RichBlockQuote:
+			out = append(out, "> "+renderSpansMarkdown(blk.Spans))
+		default:
+			out = append(out, renderSpansMarkdown(blk.Spans))
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+func renderSpansMarkdown(spans []RichSpan) string {
+	var b strings.Builder
+	for _, sp := range spans {
+		txt := sp.Text
+		if sp.Underline {
+			txt = "<u>" + txt + "</u>"
+		}
+		if sp.Bold && sp.Italic {
+			txt = "***" + txt + "***"
+		} else if sp.Bold {
+			txt = "**" + txt + "**"
+		} else if sp.Italic {
+			txt = "*" + txt + "*"
+		}
+		b.WriteString(txt)
+	}
+	return b.String()
+}
+
+// RenderRichBlocksHTML chuyển đổi danh sách RichBlock sang mã HTML5 (.html) hoặc XHTML (.epub) hợp lệ.
+func RenderRichBlocksHTML(blocks []RichBlock, isXHTML bool, indent string) string {
+	var b strings.Builder
+	for _, blk := range blocks {
+		switch blk.Kind {
+		case RichBlockDivider:
+			if isXHTML {
+				b.WriteString(indent + `<div class="scene-break">* * *</div>` + "\n")
+			} else {
+				b.WriteString(indent + `<hr class="scene-break">` + "\n")
+			}
+		case RichBlockHeading:
+			if isXHTML {
+				b.WriteString(indent + `<h4 class="sub-heading">` + renderSpansHTML(blk.Spans, true) + `</h4>` + "\n")
+			} else {
+				b.WriteString(indent + `<h5 class="sub-heading">` + renderSpansHTML(blk.Spans, false) + `</h5>` + "\n")
+			}
+		case RichBlockQuote:
+			b.WriteString(indent + `<blockquote><p>` + renderSpansHTML(blk.Spans, isXHTML) + `</p></blockquote>` + "\n")
+		default:
+			b.WriteString(indent + `<p>` + renderSpansHTML(blk.Spans, isXHTML) + `</p>` + "\n")
+		}
+	}
+	return b.String()
+}
+
+func renderSpansHTML(spans []RichSpan, isXHTML bool) string {
+	var b strings.Builder
+	for _, sp := range spans {
+		var escaped string
+		if isXHTML {
+			escaped = escapeXML(sp.Text)
+		} else {
+			escaped = html.EscapeString(sp.Text)
+		}
+		if sp.Underline {
+			if isXHTML {
+				escaped = `<span class="underline-span">` + escaped + `</span>`
+			} else {
+				escaped = `<u>` + escaped + `</u>`
+			}
+		}
+		if sp.Italic {
+			escaped = `<em>` + escaped + `</em>`
+		}
+		if sp.Bold {
+			escaped = `<strong>` + escaped + `</strong>`
+		}
+		b.WriteString(escaped)
+	}
+	return b.String()
+}
+
+// RenderRichBlocksODT chuyển đổi danh sách RichBlock sang các nút XML OpenDocument Text (<text:p>, <text:h>, <text:span>).
+func RenderRichBlocksODT(blocks []RichBlock) string {
+	var b strings.Builder
+	for _, blk := range blocks {
+		switch blk.Kind {
+		case RichBlockDivider:
+			b.WriteString(`      <text:p text:style-name="SceneSeparator">* * *</text:p>` + "\n")
+		case RichBlockHeading:
+			b.WriteString(`      <text:h text:style-name="Heading_20_3" text:outline-level="3">` + renderSpansODT(blk.Spans) + `</text:h>` + "\n")
+		case RichBlockQuote:
+			b.WriteString(`      <text:p text:style-name="Block_20_Quote">` + renderSpansODT(blk.Spans) + `</text:p>` + "\n")
+		default:
+			b.WriteString(`      <text:p text:style-name="Text_20_body">` + renderSpansODT(blk.Spans) + `</text:p>` + "\n")
+		}
+	}
+	return b.String()
+}
+
+func renderSpansODT(spans []RichSpan) string {
+	var b strings.Builder
+	for _, sp := range spans {
+		escaped := escapeXML(sp.Text)
+		styleName := ""
+		switch {
+		case sp.Bold && sp.Italic && sp.Underline:
+			styleName = "TBoldItalicUnderline"
+		case sp.Bold && sp.Italic:
+			styleName = "TBoldItalic"
+		case sp.Bold && sp.Underline:
+			styleName = "TBoldUnderline"
+		case sp.Italic && sp.Underline:
+			styleName = "TItalicUnderline"
+		case sp.Bold:
+			styleName = "TBold"
+		case sp.Italic:
+			styleName = "TItalic"
+		case sp.Underline:
+			styleName = "TUnderline"
+		}
+		if styleName != "" {
+			b.WriteString(fmt.Sprintf(`<text:span text:style-name="%s">%s</text:span>`, styleName, escaped))
+		} else {
+			b.WriteString(escaped)
+		}
+	}
+	return b.String()
+}
+
+// RenderRichBlocksPlainText xuất các khối RichBlock ra văn bản thuần (.txt), gỡ bỏ các ký hiệu đánh dấu thô.
+func RenderRichBlocksPlainText(blocks []RichBlock) string {
+	var b strings.Builder
+	for _, blk := range blocks {
+		plain := flattenSpansPlainText(blk.Spans)
+		switch blk.Kind {
+		case RichBlockDivider:
+			b.WriteString("                    * * *\n\n")
+		case RichBlockHeading:
+			b.WriteString("    [" + strings.ToUpper(plain) + "]\n\n")
+		case RichBlockQuote:
+			b.WriteString("    │ “" + plain + "”\n\n")
+		default:
+			b.WriteString("    " + plain + "\n\n")
+		}
+	}
+	return b.String()
+}
+
+func flattenSpansPlainText(spans []RichSpan) string {
+	var b strings.Builder
+	for _, sp := range spans {
+		b.WriteString(sp.Text)
+	}
+	return b.String()
+}
+
+// wrapRichSpansPt ngắt dòng danh sách RichSpan theo chiều rộng điểm ảnh PDF (pt) mà vẫn giữ nguyên thuộc tính Bold/Italic/Underline của từng từ.
+func wrapRichSpansPt(m *ttfFontMetrics, spans []RichSpan, fontSize float64, maxWidthPt float64) [][]RichSpan {
+	return wrapRichSpansFirstLinePt(m, spans, fontSize, maxWidthPt, 0)
+}
+
+func wrapRichSpansFirstLinePt(m *ttfFontMetrics, spans []RichSpan, fontSize float64, maxWidthPt float64, firstLineIndent float64) [][]RichSpan {
+	type styledWord struct {
+		word      string
+		bold      bool
+		italic    bool
+		underline bool
+	}
+	var words []styledWord
+	for _, sp := range spans {
+		parts := strings.Fields(sp.Text)
+		for _, w := range parts {
+			words = append(words, styledWord{
+				word:      w,
+				bold:      sp.Bold,
+				italic:    sp.Italic,
+				underline: sp.Underline,
+			})
+		}
+	}
+	if len(words) == 0 {
+		return nil
+	}
+
+	var lines [][]RichSpan
+	var curLine []styledWord
+	var curWidth float64
+	spaceW := m.measureStringPt(" ", fontSize)
+
+	flushLine := func() {
+		if len(curLine) == 0 {
+			return
+		}
+		var merged []RichSpan
+		for idx, sw := range curLine {
+			piece := sw.word
+			if idx < len(curLine)-1 {
+				piece += " "
+			}
+			if len(merged) > 0 {
+				last := &merged[len(merged)-1]
+				if last.Bold == sw.bold && last.Italic == sw.italic && last.Underline == sw.underline {
+					last.Text += piece
+					continue
+				}
+			}
+			merged = append(merged, RichSpan{
+				Text:      piece,
+				Bold:      sw.bold,
+				Italic:    sw.italic,
+				Underline: sw.underline,
+			})
+		}
+		lines = append(lines, merged)
+		curLine = nil
+		curWidth = 0
+	}
+
+	for _, sw := range words {
+		wPt := m.measureStringPt(sw.word, fontSize)
+		limit := maxWidthPt
+		if len(lines) == 0 {
+			limit = maxWidthPt - firstLineIndent
+		}
+		addedW := wPt
+		if len(curLine) > 0 {
+			addedW += spaceW
+		}
+		if len(curLine) > 0 && curWidth+addedW > limit {
+			flushLine()
+		}
+		curLine = append(curLine, sw)
+		curWidth += addedW
+	}
+	flushLine()
+
+	return lines
+}
+

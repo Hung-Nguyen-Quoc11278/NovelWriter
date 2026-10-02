@@ -1515,7 +1515,7 @@ func (s *Store) ExportManuscriptMarkdown(project Project) (string, error) {
 			for i, sc := range scenes {
 				b.WriteString(fmt.Sprintf("#### %s\n\n", sc.Title))
 				if strings.TrimSpace(sc.Content) != "" {
-					b.WriteString(strings.TrimSpace(sc.Content) + "\n\n")
+					b.WriteString(NormalizeRichProseToMarkdown(sc.Content) + "\n\n")
 				}
 				if i < len(scenes)-1 {
 					b.WriteString("* * *\n\n")
@@ -1540,7 +1540,11 @@ func (s *Store) ExportManuscriptHTML(project Project) (string, error) {
   h2 { margin-top: 3rem; border-bottom: 1px solid #D6D0C4; padding-bottom: 0.4rem; }
   h3 { margin-top: 2rem; color: #3F3C36; }
   h4 { margin-top: 1.5rem; color: #78716C; font-weight: normal; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85rem; }
+  h5.sub-heading { margin-top: 1.4rem; margin-bottom: 0.6rem; color: #2D2A24; font-size: 1.1rem; font-weight: bold; }
   p { margin: 1.1rem 0; text-indent: 1.5rem; }
+  blockquote { margin: 1.2rem 1.5rem; padding: 0.5rem 1.2rem; border-left: 3px solid #8B3A2B; background: rgba(139, 58, 43, 0.05); font-style: italic; color: #3F3C36; }
+  blockquote p { text-indent: 0; margin: 0.4rem 0; }
+  u { text-decoration: underline; text-underline-offset: 2px; }
   hr.scene-break { border: none; text-align: center; margin: 2rem 0; }
   hr.scene-break::after { content: "* * *"; color: #78716C; letter-spacing: 0.4em; }
 </style>
@@ -1568,13 +1572,8 @@ func (s *Store) ExportManuscriptHTML(project Project) (string, error) {
 			}
 			for i, sc := range scenes {
 				b.WriteString(fmt.Sprintf("<h4>%s</h4>\n", html.EscapeString(sc.Title)))
-				paragraphs := strings.Split(strings.TrimSpace(sc.Content), "\n\n")
-				for _, p := range paragraphs {
-					clean := strings.TrimSpace(p)
-					if clean != "" {
-						b.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(clean)))
-					}
-				}
+				blocks := ParseRichProseBlocks(sc.Content)
+				b.WriteString(RenderRichBlocksHTML(blocks, false, "    "))
 				if i < len(scenes)-1 {
 					b.WriteString("<hr class=\"scene-break\">\n")
 				}

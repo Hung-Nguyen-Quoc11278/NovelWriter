@@ -54,12 +54,17 @@ type EditorPanel struct {
 	splitContainer  *container.Split
 
 	// Các vùng chứa bố cục để đồng bộ kích thước tức thì khi phóng to cửa sổ (Maximize / Scale)
-	headerForm      *fyne.Container
-	footerStats     *fyne.Container
-	centerEditor    *fyne.Container
-	contextVBox     *fyne.Container
-	contextScroll   *container.Scroll
-	notesTabContent *fyne.Container
+	headerForm        *fyne.Container
+	formattingToolbar *fyne.Container
+	footerStats       *fyne.Container
+	centerEditor      *fyne.Container
+	editorBodyStack   *fyne.Container
+	richPreview       *widget.RichText
+	richPreviewScroll *container.Scroll
+	isPreviewMode     bool
+	contextVBox       *fyne.Container
+	contextScroll     *container.Scroll
+	notesTabContent   *fyne.Container
 
 	// Bộ nhớ đệm danh sách thực thể của tác phẩm hiện tại
 	characters []Character
@@ -101,11 +106,19 @@ func (ep *EditorPanel) buildUI() {
 	})
 
 	ep.proseEntry = NewVietnameseMultiLineEntry()
-	ep.proseEntry.SetPlaceHolder("Bắt đầu viết nội dung cảnh bằng tiếng Việt tại đây... Mọi thay đổi sẽ được tự động lưu vào SQLite.")
+	ep.proseEntry.SetPlaceHolder("Bắt đầu viết nội dung cảnh bằng tiếng Việt tại đây... Hỗ trợ định dạng In đậm (**chữ**), In nghiêng (*chữ*), Gạch chân (<u>chữ</u>) và Trích dẫn (> dòng).")
 	ep.proseEntry.SetOnChangedCallback(func(_ string) {
+		if ep.isPreviewMode && ep.richPreview != nil {
+			ep.richPreview.ParseMarkdown(ConvertRichProseToFyneMarkdown(ep.proseEntry.Text))
+		}
 		ep.updateLiveWordCounts()
 		ep.scheduleAutoSave()
 	})
+
+	ep.richPreview = widget.NewRichTextFromMarkdown("")
+	ep.richPreview.Wrapping = fyne.TextWrapWord
+	ep.richPreviewScroll = container.NewVScroll(container.NewPadded(ep.richPreview))
+	ep.richPreviewScroll.Hide()
 
 	ep.sceneWordLabel = widget.NewLabel("Cảnh: 0 / 1200 từ")
 	ep.chapterWordLabel = widget.NewLabel("Chương: 0 / 3000 từ")
@@ -191,9 +204,81 @@ func (ep *EditorPanel) buildUI() {
 		ep.summaryEntry,
 	)
 
+	// Thanh công cụ Định dạng Văn bản (Rich Text Formatting Toolbar):
+	// In đậm (Ctrl+B), In nghiêng (Ctrl+I), Gạch chân / Ghi chú (Ctrl+U), Trích dẫn (Ctrl+Q), Tiêu đề đoạn, Ngắt cảnh & Xem trước
+	boldBtn := widget.NewButton("B In đậm", func() {
+		ep.FormatBold()
+	})
+	boldBtn.Importance = widget.LowImportance
+
+	italicBtn := widget.NewButton("I In nghiêng", func() {
+		ep.FormatItalic()
+	})
+	italicBtn.Importance = widget.LowImportance
+
+	underlineBtn := widget.NewButton("U Gạch chân", func() {
+		ep.FormatUnderline()
+	})
+	underlineBtn.Importance = widget.LowImportance
+
+	quoteBtn := widget.NewButton("❝ Trích dẫn", func() {
+		ep.FormatBlockquote()
+	})
+	quoteBtn.Importance = widget.LowImportance
+
+	headingBtn := widget.NewButton("H Tiêu đề phụ", func() {
+		ep.FormatSubHeading()
+	})
+	headingBtn.Importance = widget.LowImportance
+
+	dividerBtn := widget.NewButton("― Ngắt cảnh", func() {
+		ep.InsertSceneDivider()
+	})
+	dividerBtn.Importance = widget.LowImportance
+
+	var previewToggleBtn *widget.Button
+	previewToggleBtn = widget.NewButton("👁️ Xem trước Định dạng", func() {
+		PlayUIClickSound()
+		ep.isPreviewMode = !ep.isPreviewMode
+		if ep.isPreviewMode {
+			ep.richPreview.ParseMarkdown(ConvertRichProseToFyneMarkdown(ep.proseEntry.Text))
+			ep.proseEntry.Hide()
+			ep.richPreviewScroll.Show()
+			previewToggleBtn.SetText("✏️ Quay lại Soạn thảo")
+			previewToggleBtn.Importance = widget.HighImportance
+		} else {
+			ep.richPreviewScroll.Hide()
+			ep.proseEntry.Show()
+			previewToggleBtn.SetText("👁️ Xem trước Định dạng")
+			previewToggleBtn.Importance = widget.LowImportance
+			if ep.window != nil && ep.window.Canvas() != nil {
+				ep.window.Canvas().Focus(ep.proseEntry)
+			}
+		}
+		previewToggleBtn.Refresh()
+		if ep.editorBodyStack != nil {
+			ep.editorBodyStack.Refresh()
+		}
+	})
+	previewToggleBtn.Importance = widget.LowImportance
+
+	ep.formattingToolbar = container.NewHBox(
+		widget.NewLabelWithStyle("Định dạng:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		boldBtn,
+		italicBtn,
+		underlineBtn,
+		quoteBtn,
+		headingBtn,
+		dividerBtn,
+		layout.NewSpacer(),
+		previewToggleBtn,
+	)
+
 	ep.headerForm = container.NewVBox(
 		titleRow,
 		summaryAndZoomRow,
+		widget.NewSeparator(),
+		ep.formattingToolbar,
 		widget.NewSeparator(),
 	)
 
@@ -210,7 +295,8 @@ func (ep *EditorPanel) buildUI() {
 		),
 	)
 
-	ep.centerEditor = container.NewBorder(ep.headerForm, ep.footerStats, nil, nil, ep.proseEntry)
+	ep.editorBodyStack = container.NewStack(ep.proseEntry, ep.richPreviewScroll)
+	ep.centerEditor = container.NewBorder(ep.headerForm, ep.footerStats, nil, nil, ep.editorBodyStack)
 
 	// Bố cục thanh bên phải: Tab "Ngữ cảnh Cảnh" (Mở rộng với Nhân vật, Vật phẩm & Sự kiện)
 	openHubBtn := widget.NewButton("⚙️ Mở Trung Tâm Thế Giới & Thẻ...", func() {
@@ -412,6 +498,9 @@ func (ep *EditorPanel) LoadScene(sceneID int64, projectID int64) error {
 	ep.summaryEntry.SetText(sc.Summary)
 	ep.targetWordsEntry.SetText(fmt.Sprintf("%d", sc.TargetWords))
 	ep.proseEntry.SetText(sc.Content)
+	if ep.richPreview != nil {
+		ep.richPreview.ParseMarkdown(ConvertRichProseToFyneMarkdown(sc.Content))
+	}
 	ep.sideNotesEntry.SetText(sc.SideNotes)
 	ep.statusSelect.SetSelected(string(NormalizeStatus(sc.Status)))
 
@@ -692,4 +781,78 @@ func (ep *EditorPanel) findEventTitleByID(id int64) string {
 		}
 	}
 	return ""
+}
+
+// ==================== CÁC THAO TÁC ĐỊNH DẠNG VĂN BẢN (RICH TEXT ACTIONS) ====================
+
+// FormatBold bọc văn bản đang chọn (hoặc từ tại con trỏ) bằng cặp thẻ In đậm (**văn bản**).
+func (ep *EditorPanel) FormatBold() {
+	if ep.proseEntry == nil {
+		return
+	}
+	PlayUIClickSound()
+	ep.proseEntry.WrapSelectionOrInsert("**", "**", "văn bản in đậm")
+	if ep.window != nil && ep.window.Canvas() != nil && !ep.isPreviewMode {
+		ep.window.Canvas().Focus(ep.proseEntry)
+	}
+}
+
+// FormatItalic bọc văn bản đang chọn (hoặc từ tại con trỏ) bằng cặp thẻ In nghiêng (*văn bản*).
+func (ep *EditorPanel) FormatItalic() {
+	if ep.proseEntry == nil {
+		return
+	}
+	PlayUIClickSound()
+	ep.proseEntry.WrapSelectionOrInsert("*", "*", "văn bản in nghiêng")
+	if ep.window != nil && ep.window.Canvas() != nil && !ep.isPreviewMode {
+		ep.window.Canvas().Focus(ep.proseEntry)
+	}
+}
+
+// FormatUnderline bọc văn bản đang chọn (hoặc từ tại con trỏ) bằng cặp thẻ Gạch chân / Ghi chú (<u>văn bản</u>).
+func (ep *EditorPanel) FormatUnderline() {
+	if ep.proseEntry == nil {
+		return
+	}
+	PlayUIClickSound()
+	ep.proseEntry.WrapSelectionOrInsert("<u>", "</u>", "ghi chú gạch chân")
+	if ep.window != nil && ep.window.Canvas() != nil && !ep.isPreviewMode {
+		ep.window.Canvas().Focus(ep.proseEntry)
+	}
+}
+
+// FormatBlockquote bật/tắt định dạng Trích dẫn (> ) cho dòng văn bản hiện tại.
+func (ep *EditorPanel) FormatBlockquote() {
+	if ep.proseEntry == nil {
+		return
+	}
+	PlayUIClickSound()
+	ep.proseEntry.ToggleLinePrefix("> ", "Đoạn trích dẫn...")
+	if ep.window != nil && ep.window.Canvas() != nil && !ep.isPreviewMode {
+		ep.window.Canvas().Focus(ep.proseEntry)
+	}
+}
+
+// FormatSubHeading bật/tắt định dạng Tiêu đề phụ (### ) cho dòng văn bản hiện tại.
+func (ep *EditorPanel) FormatSubHeading() {
+	if ep.proseEntry == nil {
+		return
+	}
+	PlayUIClickSound()
+	ep.proseEntry.ToggleLinePrefix("### ", "Tiêu đề phân đoạn")
+	if ep.window != nil && ep.window.Canvas() != nil && !ep.isPreviewMode {
+		ep.window.Canvas().Focus(ep.proseEntry)
+	}
+}
+
+// InsertSceneDivider chèn dấu ngắt cảnh (* * *) vào vị trí dòng hiện tại.
+func (ep *EditorPanel) InsertSceneDivider() {
+	if ep.proseEntry == nil {
+		return
+	}
+	PlayUIClickSound()
+	ep.proseEntry.InsertBlockSnippet("* * *")
+	if ep.window != nil && ep.window.Canvas() != nil && !ep.isPreviewMode {
+		ep.window.Canvas().Focus(ep.proseEntry)
+	}
 }

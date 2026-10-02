@@ -970,3 +970,263 @@ func repositionToneInWord(runes []rune) []rune {
 	}
 	return out
 }
+
+// ==================== ĐỊNH DẠNG VĂN BẢN PHONG PHÚ (RICH TEXT FORMATTING HELPERS) ====================
+
+// TypedShortcut hỗ trợ các phím tắt định dạng nhanh (Ctrl+B: In đậm, Ctrl+I: In nghiêng, Ctrl+U: Gạch chân, Ctrl+Q: Trích dẫn)
+// đồng thời chuyển tiếp đầy đủ các phím tắt chuẩn (Copy, Paste, Cut, SelectAll, Undo) cho widget.Entry.
+func (e *VietnameseEntry) TypedShortcut(shortcut fyne.Shortcut) {
+	if cs, ok := shortcut.(*desktop.CustomShortcut); ok {
+		if cs.Modifier&(fyne.KeyModifierControl|fyne.KeyModifierSuper) != 0 {
+			switch cs.KeyName {
+			case fyne.KeyB:
+				PlayUIClickSound()
+				e.WrapSelectionOrInsert("**", "**", "văn bản in đậm")
+				return
+			case fyne.KeyI:
+				PlayUIClickSound()
+				e.WrapSelectionOrInsert("*", "*", "văn bản in nghiêng")
+				return
+			case fyne.KeyU:
+				PlayUIClickSound()
+				e.WrapSelectionOrInsert("<u>", "</u>", "ghi chú gạch chân")
+				return
+			case fyne.KeyQ:
+				PlayUIClickSound()
+				e.ToggleLinePrefix("> ", "Đoạn trích dẫn...")
+				return
+			}
+		}
+	}
+	e.Entry.TypedShortcut(shortcut)
+	e.syncCursorFromUserClick()
+}
+
+// WrapSelectionOrInsert bọc vùng văn bản đang bôi đen (hoặc từ tại vị trí con trỏ) bằng cặp thẻ định dạng
+// (ví dụ: "**" cho In đậm, "*" cho In nghiêng, "<u>" và "</u>" cho Gạch chân / Ghi chú) chuẩn UTF-8 rune.
+func (e *VietnameseEntry) WrapSelectionOrInsert(prefix, suffix, placeholder string) {
+	if e.Disabled() {
+		return
+	}
+
+	selected := e.Entry.SelectedText()
+	if selected != "" {
+		// Nếu vùng chọn đã được bọc sẵn bởi prefix/suffix thì gỡ bỏ cặp thẻ (Toggle Off)
+		replacement := prefix + selected + suffix
+		if strings.HasPrefix(selected, prefix) && strings.HasSuffix(selected, suffix) && len(selected) >= len(prefix)+len(suffix) {
+			replacement = selected[len(prefix) : len(selected)-len(suffix)]
+		}
+
+		e.mu.Lock()
+		fullText := e.Entry.Text
+		row := e.Entry.CursorRow
+		col := e.Entry.CursorColumn
+		e.mu.Unlock()
+
+		// Thay thế lần xuất hiện của vùng chọn gần vị trí con trỏ nhất theo đơn vị rune UTF-8
+		newText, newRow, newCol := replaceSelectedSubstringUTF8(fullText, selected, replacement, row, col)
+		e.applyFormattedTextAndNotify(newText, newRow, newCol)
+		return
+	}
+
+	// Khi người dùng không bôi đen văn bản: chèn tại vị trí dòng/cột con trỏ hiện hành
+	e.mu.Lock()
+	row, col := e.Entry.CursorRow, e.Entry.CursorColumn
+	if e.hasLockedCursor && row == 0 && col == 0 && (e.lockedRow > 0 || e.lockedCol > 0) {
+		row = e.lockedRow
+		col = e.lockedCol
+	}
+	lines := strings.Split(e.Entry.Text, "\n")
+	e.mu.Unlock()
+
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(lines) {
+		row = len(lines) - 1
+	}
+
+	lineRunes := DecodeUTF8Runes(lines[row])
+	if col < 0 {
+		col = 0
+	}
+	if col > len(lineRunes) {
+		col = len(lineRunes)
+	}
+
+	// Nếu con trỏ đang đứng ngay giữa hoặc cuối một từ -> bọc trực tiếp từ đó
+	wStart, wEnd := findWordBoundsAtColumn(lineRunes, col)
+	if wEnd > wStart {
+		word := string(lineRunes[wStart:wEnd])
+		wrapped := prefix + word + suffix
+		var updatedLine strings.Builder
+		updatedLine.WriteString(string(lineRunes[:wStart]))
+		updatedLine.WriteString(wrapped)
+		updatedLine.WriteString(string(lineRunes[wEnd:]))
+		lines[row] = updatedLine.String()
+		newCol := wStart + UTF8RuneLength(wrapped)
+		e.applyFormattedTextAndNotify(strings.Join(lines, "\n"), row, newCol)
+		return
+	}
+
+	// Ngược lại chèn cụm prefix + placeholder + suffix tại con trỏ
+	inserted := prefix + placeholder + suffix
+	var updatedLine strings.Builder
+	updatedLine.WriteString(string(lineRunes[:col]))
+	updatedLine.WriteString(inserted)
+	updatedLine.WriteString(string(lineRunes[col:]))
+	lines[row] = updatedLine.String()
+	newCol := col + UTF8RuneLength(prefix) + UTF8RuneLength(placeholder)
+	e.applyFormattedTextAndNotify(strings.Join(lines, "\n"), row, newCol)
+}
+
+// ToggleLinePrefix bật/tắt tiền tố đầu dòng (như "> " cho Trích dẫn hoặc "### " cho Tiêu đề phụ)
+// trên dòng hiện hành mà vẫn bảo toàn tuyệt đối vị trí dòng con trỏ.
+func (e *VietnameseEntry) ToggleLinePrefix(linePrefix, placeholder string) {
+	if e.Disabled() {
+		return
+	}
+
+	e.mu.Lock()
+	row, col := e.Entry.CursorRow, e.Entry.CursorColumn
+	if e.hasLockedCursor && row == 0 && col == 0 && (e.lockedRow > 0 || e.lockedCol > 0) {
+		row = e.lockedRow
+		col = e.lockedCol
+	}
+	lines := strings.Split(e.Entry.Text, "\n")
+	e.mu.Unlock()
+
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(lines) {
+		row = len(lines) - 1
+	}
+
+	currentLine := lines[row]
+	prefixRuneLen := UTF8RuneLength(linePrefix)
+	var newCol int
+
+	if strings.HasPrefix(currentLine, linePrefix) {
+		lines[row] = strings.TrimPrefix(currentLine, linePrefix)
+		newCol = col - prefixRuneLen
+		if newCol < 0 {
+			newCol = 0
+		}
+	} else {
+		if strings.TrimSpace(currentLine) == "" {
+			lines[row] = linePrefix + placeholder
+			newCol = prefixRuneLen + UTF8RuneLength(placeholder)
+		} else {
+			lines[row] = linePrefix + currentLine
+			newCol = col + prefixRuneLen
+		}
+	}
+
+	e.applyFormattedTextAndNotify(strings.Join(lines, "\n"), row, newCol)
+}
+
+// InsertBlockSnippet chèn một khối ngắt cảnh (ví dụ "* * *") trên dòng riêng tại vị trí con trỏ.
+func (e *VietnameseEntry) InsertBlockSnippet(snippet string) {
+	if e.Disabled() {
+		return
+	}
+
+	e.mu.Lock()
+	row := e.Entry.CursorRow
+	if e.hasLockedCursor && row == 0 && e.lockedRow > 0 {
+		row = e.lockedRow
+	}
+	lines := strings.Split(e.Entry.Text, "\n")
+	e.mu.Unlock()
+
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(lines) {
+		row = len(lines) - 1
+	}
+
+	var updated []string
+	updated = append(updated, lines[:row+1]...)
+	updated = append(updated, "", snippet, "")
+	if row+1 < len(lines) {
+		updated = append(updated, lines[row+1:]...)
+	}
+
+	newRow := row + 3
+	e.applyFormattedTextAndNotify(strings.Join(updated, "\n"), newRow, 0)
+}
+
+func (e *VietnameseEntry) applyFormattedTextAndNotify(newText string, targetRow, targetCol int) {
+	e.mu.Lock()
+	e.composingInternal = true
+	e.mu.Unlock()
+
+	e.Entry.SetText(newText)
+
+	e.mu.Lock()
+	e.Entry.CursorRow = targetRow
+	e.Entry.CursorColumn = targetCol
+	e.lockedRow = targetRow
+	e.lockedCol = targetCol
+	e.hasLockedCursor = true
+	e.lastTypedAt = time.Now()
+	e.composingInternal = false
+	cb := e.userOnChanged
+	e.mu.Unlock()
+
+	e.Entry.Refresh()
+	if cb != nil {
+		cb(newText)
+	}
+}
+
+func findWordBoundsAtColumn(lineRunes []rune, col int) (int, int) {
+	if len(lineRunes) == 0 {
+		return 0, 0
+	}
+	idx := col
+	if idx >= len(lineRunes) {
+		idx = len(lineRunes) - 1
+	}
+	if idx > 0 && !unicode.IsLetter(lineRunes[idx]) && !unicode.IsNumber(lineRunes[idx]) &&
+		(unicode.IsLetter(lineRunes[idx-1]) || unicode.IsNumber(lineRunes[idx-1])) {
+		idx--
+	}
+	if !unicode.IsLetter(lineRunes[idx]) && !unicode.IsNumber(lineRunes[idx]) {
+		return col, col
+	}
+	start := idx
+	for start > 0 && (unicode.IsLetter(lineRunes[start-1]) || unicode.IsNumber(lineRunes[start-1])) {
+		start--
+	}
+	end := idx + 1
+	for end < len(lineRunes) && (unicode.IsLetter(lineRunes[end]) || unicode.IsNumber(lineRunes[end])) {
+		end++
+	}
+	return start, end
+}
+
+func replaceSelectedSubstringUTF8(fullText, selected, replacement string, cursorRow, cursorCol int) (string, int, int) {
+	idx := strings.Index(fullText, selected)
+	if idx < 0 {
+		return fullText, cursorRow, cursorCol
+	}
+	updated := fullText[:idx] + replacement + fullText[idx+len(selected):]
+	prefixBefore := updated[:idx+len(replacement)]
+	prefixLines := strings.Split(prefixBefore, "\n")
+	newRow := len(prefixLines) - 1
+	newCol := UTF8RuneLength(prefixLines[len(prefixLines)-1])
+	return updated, newRow, newCol
+}
+

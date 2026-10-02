@@ -294,9 +294,22 @@ func ParseNodeUID(uid string) (string, int64, error) {
 	return parts[0], id, nil
 }
 
-// CountWords đếm số từ chuẩn xác cho văn bản tiếng Việt (UTF-8 đa byte) bằng gói unicode/utf8.
+// CountWords đếm số từ chuẩn xác cho văn bản tiếng Việt (UTF-8 đa byte) bằng gói unicode/utf8,
+// tự động loại bỏ các thẻ định dạng Rich Text (**, *, <u>, </u>, >, ###) để không làm sai lệch thống kê từ.
 func CountWords(text string) int {
-	trimmed := strings.TrimSpace(text)
+	clean := strings.NewReplacer(
+		"<u>", " ", "</u>", " ",
+		"<b>", " ", "</b>", " ",
+		"<strong>", " ", "</strong>", " ",
+		"<i>", " ", "</i>", " ",
+		"<em>", " ", "</em>", " ",
+		"<ins>", " ", "</ins>", " ",
+		"<blockquote>", " ", "</blockquote>", " ",
+		"***", " ", "**", " ", "__", " ", "++", " ",
+		"* * *", " ", "###", " ",
+	).Replace(text)
+
+	trimmed := strings.TrimSpace(clean)
 	if trimmed == "" || utf8.RuneCountInString(trimmed) == 0 {
 		return 0
 	}
@@ -308,7 +321,7 @@ func CountWords(text string) int {
 		if r == utf8.RuneError && width == 1 {
 			continue
 		}
-		if unicode.IsSpace(r) {
+		if unicode.IsSpace(r) || r == '*' || r == '_' || r == '>' {
 			inWord = false
 		} else if !inWord {
 			inWord = true
