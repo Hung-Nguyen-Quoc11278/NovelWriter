@@ -317,11 +317,16 @@ func (e *VietnameseEntry) FocusGained() {
 
 	if hadLock {
 		e.mu.Lock()
+		cursorRestored := false
 		if e.Entry.CursorRow == 0 && e.Entry.CursorColumn == 0 && (savedRow > 0 || savedCol > 0) {
 			e.Entry.CursorRow = savedRow
 			e.Entry.CursorColumn = savedCol
+			cursorRestored = true
 		}
 		e.mu.Unlock()
+		if cursorRestored {
+			e.Entry.Refresh()
+		}
 	}
 }
 
@@ -341,16 +346,21 @@ func (e *VietnameseEntry) TypedKey(ev *fyne.KeyEvent) {
 	PlayTypingSound(0, ev)
 
 	e.mu.Lock()
+	cursorAdjusted := false
 	if (ev.Name == fyne.KeyReturn || ev.Name == fyne.KeyEnter) && e.MultiLine {
 		if e.Entry.CursorRow <= prevRow {
 			e.Entry.CursorRow = prevRow + 1
 			e.Entry.CursorColumn = 0
+			cursorAdjusted = true
 		}
 	}
 	e.lockedRow = e.Entry.CursorRow
 	e.lockedCol = e.Entry.CursorColumn
 	e.hasLockedCursor = true
 	e.mu.Unlock()
+	if cursorAdjusted {
+		e.Entry.Refresh()
+	}
 }
 
 // TypedRune xử lý ký tự Unicode chuẩn UTF-8 từ Fcitx5/IBus hoặc bàn phím:
@@ -451,6 +461,7 @@ func (e *VietnameseEntry) TypedRune(r rune) {
 
 	e.mu.Lock()
 	// Ngăn lỗi nhảy ngược con trỏ lên dòng phía trên khi đang gõ trên dòng mới
+	cursorAdjusted := e.Entry.CursorRow < rowBefore
 	if e.Entry.CursorRow < rowBefore {
 		e.Entry.CursorRow = rowBefore
 		e.Entry.CursorColumn = colBefore + 1
@@ -459,6 +470,9 @@ func (e *VietnameseEntry) TypedRune(r rune) {
 	e.lockedCol = e.Entry.CursorColumn
 	e.hasLockedCursor = true
 	e.mu.Unlock()
+	if cursorAdjusted {
+		e.Entry.Refresh()
+	}
 }
 
 // decodeRuneBeforeCaretLocked giải mã ký tự Unicode (rune) cuối cùng trước con trỏ bằng unicode/utf8.
@@ -1229,4 +1243,3 @@ func replaceSelectedSubstringUTF8(fullText, selected, replacement string, cursor
 	newCol := UTF8RuneLength(prefixLines[len(prefixLines)-1])
 	return updated, newRow, newCol
 }
-

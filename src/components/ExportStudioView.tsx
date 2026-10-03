@@ -444,7 +444,16 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
   }, [project.title]);
 
   const edgeTTSCommand = useMemo(() => {
-    return `edge-tts --voice ${selectedVoiceId} --text "${activeAudioContent.slice(0, 100).replace(/"/g, '\\"')}..." --write-media "${safeFileName}.mp3"`;
+    const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+    const previewText = `${activeAudioContent.slice(0, 100)}...`;
+    return [
+      'edge-tts',
+      '--voice', quote(selectedVoiceId),
+      '--rate', quote('+0%'),
+      '--volume', quote('+0%'),
+      '--text', quote(previewText),
+      '--write-media', quote(`${safeFileName}.mp3`),
+    ].join(' ');
   }, [selectedVoiceId, activeAudioContent, safeFileName]);
 
   const handleExportAudio = () => {
@@ -926,31 +935,29 @@ export const ExportStudioView: React.FC<ExportStudioViewProps> = ({
               </div>
             )}
 
-            {/* Giao thức Edge-TTS WebSocket thuần Go */}
+            {/* Lệnh tổng hợp Edge-TTS */}
             <div className="bg-[#181715] text-[#E7E2D8] border border-[#2E2C28] p-4 space-y-2">
               <div className="flex items-center justify-between text-xs text-[#A8A29E]">
                 <div className="flex items-center gap-1.5 font-mono-code">
                   <Terminal className="w-3.5 h-3.5 text-[#E7E2D8]" />
-                  <span>Giao thức kết nối: Pure Go WebSocket (wss://speech.platform.bing.com)</span>
+                  <span>Lệnh tổng hợp bằng Edge-TTS</span>
                 </div>
                 <button
                   type="button"
                   onClick={async () => {
-                    await navigator.clipboard.writeText(
-                      `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?trustedclienttoken=6A5AA1D4EAFF4E9fb37e23d68491d6f4 [Voice: ${selectedVoiceId}]`
-                    );
+                    await navigator.clipboard.writeText(edgeTTSCommand);
                     setCopied(true);
                     setTimeout(() => setCopied(false), 2000);
                   }}
                   className="text-[11px] text-[#E7E2D8] hover:text-white underline cursor-pointer"
                 >
-                  Sao chép Endpoint WebSocket
+                  {copied ? 'Đã sao chép' : 'Sao chép lệnh'}
                 </button>
               </div>
-              <div className="font-mono-code text-[11px] text-[#93C5FD] bg-black/40 p-2.5 rounded-xs space-y-1">
-                <div>• Endpoint: <span className="text-[#A7F3D0]">wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?trustedclienttoken=6A5AA1D4EAFF4E9fb37e23d68491d6f4</span></div>
-                <div>• Voice: <span className="text-[#FDE047]">{selectedVoiceId}</span> | Format: <span className="text-[#F472B6]">audio-24khz-48kbitrate-mono-mp3</span></div>
-                <div className="text-[#9CA3AF] text-[10px]">Độc lập 100% bằng Go tiêu chuẩn (RFC 6455 + SSML) — Không cần Python, không cần pip install.</div>
+              <div className="font-mono-code text-[11px] text-[#93C5FD] bg-black/40 p-2.5 rounded-xs space-y-1 break-all">
+                <div>{edgeTTSCommand}</div>
+                <div className="text-[#A7F3D0]">Giọng đọc: {selectedVoiceId} • Định dạng: MP3</div>
+                <div className="text-[#9CA3AF] text-[10px]">Bản phát hành GoNovelist cần kèm runtime Python và gói Edge-TTS trong assets/python để người dùng không phải cài đặt riêng.</div>
               </div>
             </div>
 
