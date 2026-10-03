@@ -294,6 +294,7 @@ func (ui *NovelistUI) ShowSettingsDialog() {
 	)
 
 	d := dialog.NewCustom("Cài Đặt Hệ Thống — GoNovelist", "Đóng", tabs, ui.window)
+	ui.attachLayoutRefreshOnClose(d)
 	d.Resize(fyne.NewSize(780, 560))
 	d.Show()
 }

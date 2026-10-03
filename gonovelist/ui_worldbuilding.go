@@ -276,6 +276,7 @@ func (p *TagColorSwatchPicker) openCustomColorPickerDialog() {
 		p.parentWin,
 	)
 	picker.Advanced = true
+	attachWindowRefreshOnClose(picker, p.parentWin)
 	picker.SetColor(parseHexColor(p.selectedHex))
 	picker.Show()
 }
@@ -731,6 +732,7 @@ func ShowWorldBuildingHub(store *Store, parentWin fyne.Window, bookID int64, onU
 	hub.reloadAllData()
 
 	d := dialog.NewCustom("Trung Tâm Xây Dựng Thế Giới & Quản Lý Thẻ Theo Danh Mục", "Đóng cửa sổ", content, parentWin)
+	attachWindowRefreshOnClose(d, parentWin)
 	d.Resize(fyne.NewSize(1140, 740))
 	d.SetOnClosed(func() {
 		if hub.onUpdated != nil {
@@ -765,7 +767,7 @@ func (h *WorldBuildingHub) buildContent() fyne.CanvasObject {
 			return
 		}
 		if _, err := h.store.CreateTagForType(h.bookID, selectedQuickCategory, name, selectedQuickHex); err != nil {
-			dialog.ShowError(err, h.parentWin)
+			showWindowErrorDialog(err, h.parentWin)
 			return
 		}
 		h.newTagEntry.SetText("")
@@ -951,7 +953,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 		if h.selectedCharID == 0 {
 			created, err := h.store.CreateCharacter(h.bookID, name, role, h.charDescEntry.Text)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 			_ = h.store.SetEntityTags(EntityCharacter, created.ID, tagIDs)
@@ -965,7 +967,7 @@ func (h *WorldBuildingHub) buildCharactersTab() fyne.CanvasObject {
 				Description: h.charDescEntry.Text,
 			}, tagIDs)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 		}
@@ -1126,7 +1128,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 		if h.selectedLocID == 0 {
 			created, err := h.store.CreateLocation(h.bookID, name, h.locDescEntry.Text)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 			_ = h.store.SetEntityTags(EntityLocation, created.ID, tagIDs)
@@ -1139,7 +1141,7 @@ func (h *WorldBuildingHub) buildLocationsTab() fyne.CanvasObject {
 				Description: h.locDescEntry.Text,
 			}, tagIDs)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 		}
@@ -1311,7 +1313,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 		if h.selectedPropID == 0 {
 			created, err := h.store.CreateProp(h.bookID, name, cat, h.propDescEntry.Text, h.propSigEntry.Text)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 			_ = h.store.SetEntityTags(EntityProp, created.ID, tagIDs)
@@ -1326,7 +1328,7 @@ func (h *WorldBuildingHub) buildPropsTab() fyne.CanvasObject {
 				Significance: h.propSigEntry.Text,
 			}, tagIDs)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 		}
@@ -1499,7 +1501,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 		if h.selectedEventID == 0 {
 			created, err := h.store.CreateEvent(h.bookID, title, order, h.eventDescEntry.Text)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 			_ = h.store.SetEntityTags(EntityEvent, created.ID, tagIDs)
@@ -1513,7 +1515,7 @@ func (h *WorldBuildingHub) buildEventsTab() fyne.CanvasObject {
 				Description:   h.eventDescEntry.Text,
 			}, tagIDs)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 		}
@@ -1802,13 +1804,13 @@ func (h *WorldBuildingHub) buildTagManagerTab() fyne.CanvasObject {
 		if h.selectedTagID == 0 {
 			created, err := h.store.CreateTagForType(h.bookID, cat, name, hexColor)
 			if err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 			h.selectedTagID = created.ID
 		} else {
 			if err := h.store.UpdateTag(h.selectedTagID, name, hexColor, cat); err != nil {
-				dialog.ShowError(err, h.parentWin)
+				showWindowErrorDialog(err, h.parentWin)
 				return
 			}
 		}
@@ -1917,7 +1919,7 @@ func (h *WorldBuildingHub) showCreateScopedTagDialog(entityType EntityType, targ
 
 	hexRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, hexEntry)
 
-	dialog.ShowForm("Thêm "+catLabel+" mới", "Tạo thẻ", "Hủy", []*widget.FormItem{
+	showWindowFormDialog("Thêm "+catLabel+" mới", "Tạo thẻ", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Danh mục", widget.NewLabelWithStyle(catLabel, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})),
 		widget.NewFormItem("Tên thẻ", nameEntry),
 		widget.NewFormItem("Bảng màu nhanh", swatchPicker.Container()),
@@ -1928,7 +1930,7 @@ func (h *WorldBuildingHub) showCreateScopedTagDialog(entityType EntityType, targ
 		}
 		created, err := h.store.CreateTagForType(h.bookID, entityType, nameEntry.Text, hexEntry.Text)
 		if err != nil {
-			dialog.ShowError(err, h.parentWin)
+			showWindowErrorDialog(err, h.parentWin)
 			return
 		}
 		prevSelected := append([]string{}, targetCheckGroup.Selected...)
@@ -1986,7 +1988,7 @@ func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
 
 	hexRow := container.NewBorder(nil, nil, container.NewCenter(dotWrap), nil, hexEntry)
 
-	dialog.ShowForm("Chỉnh sửa thẻ", "Lưu thay đổi", "Hủy", []*widget.FormItem{
+	showWindowFormDialog("Chỉnh sửa thẻ", "Lưu thay đổi", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Danh mục thẻ", categorySelect),
 		widget.NewFormItem("Tên thẻ", nameEntry),
 		widget.NewFormItem("Bảng màu nhanh", swatchPicker.Container()),
@@ -1997,7 +1999,7 @@ func (h *WorldBuildingHub) showEditTagDialog(tag Tag) {
 		}
 		newCat := ParseEntityTypeTagLabel(categorySelect.Selected)
 		if err := h.store.UpdateTag(tag.ID, nameEntry.Text, hexEntry.Text, newCat); err != nil {
-			dialog.ShowError(err, h.parentWin)
+			showWindowErrorDialog(err, h.parentWin)
 			return
 		}
 		h.reloadAllData()

@@ -523,7 +523,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 	browseBtn := widget.NewButtonWithIcon("Chọn nơi lưu...", theme.FolderOpenIcon(), func() {
 		fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 			if err != nil {
-				dialog.ShowError(err, ui.window)
+				ui.showErrorDialog(err)
 				return
 			}
 			if writer == nil {
@@ -536,6 +536,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 			}
 			pathEntry.SetText(p)
 		}, ui.window)
+		attachWindowRefreshOnClose(fd, ui.window)
 		fd.SetFileName(filepath.Base(pathEntry.Text))
 		fd.SetFilter(storage.NewExtensionFileFilter([]string{".mp3"}))
 		fd.Show()
@@ -618,7 +619,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 	exportBtn.OnTapped = func() {
 		textToRead := strings.TrimSpace(contentEntry.Text)
 		if textToRead == "" {
-			dialog.ShowInformation("Thông báo", "Vui lòng nhập nội dung văn bản để chuyển đổi sang âm thanh.", ui.window)
+			statusLabel.SetText("Vui lòng nhập nội dung văn bản để chuyển đổi sang âm thanh.")
 			return
 		}
 
@@ -674,7 +675,8 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 
 				if err != nil {
 					statusLabel.SetText("❌ Không thể tạo tệp audio.")
-					dialog.ShowError(err, ui.window)
+					audioDialog.Hide()
+					ui.showErrorDialog(err)
 					return
 				}
 
@@ -684,7 +686,8 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 					ui.statusFooter.SetText(fmt.Sprintf("Đã xuất audio: %s (%.2f MB)", filepath.Base(outPath), fileSizeMB))
 				}
 
-				dialog.ShowInformation(
+				audioDialog.Hide()
+				ui.showInformationDialog(
 					"Xuất Audio Thành Công!",
 					fmt.Sprintf("Đã xuất file âm thanh thành công.\n\n• Tệp đích: %s\n• Phạm vi xuất bản: %s\n• Giọng đọc: %s\n• Dung lượng: %.2f MB\n• Số từ: %d từ\n• Thời lượng ước tính: %.1f phút nghe",
 						outPath,
@@ -694,7 +697,6 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 						wordCount,
 						float64(wordCount)/160.0,
 					),
-					ui.window,
 				)
 			})
 		}()
@@ -725,6 +727,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 	))
 
 	audioDialog = dialog.NewCustomWithoutButtons("Xuất Bản Audio (Edge-TTS)", dialogBody, ui.window)
+	ui.attachLayoutRefreshOnClose(audioDialog)
 	audioDialog.Resize(fyne.NewSize(780, 680))
 	audioDialog.Show()
 }

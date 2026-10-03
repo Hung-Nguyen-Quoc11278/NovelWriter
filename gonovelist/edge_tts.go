@@ -149,22 +149,46 @@ func edgeTTSArguments(commandArgs []string, voiceID, text, outputPath string, ra
 }
 
 func synthesizeSpeechChunk(command edgeTTSCommand, voiceID, chunkText, outputPath string, rate, volume int) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
 	args := edgeTTSArguments(command.args, voiceID, chunkText, outputPath, rate, volume)
-	cmd := exec.CommandContext(ctx, command.path, args...)
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("quá thời gian chờ tổng hợp phần văn bản")
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		_ = os.Remove(outputPath)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		cmd := exec.CommandContext(ctx, command.path, args...)
+		output, err := cmd.CombinedOutput()
+		contextErr := ctx.Err()
+		cancel()
+
+		if err == nil {
+			info, statErr := os.Stat(outputPath)
+			if statErr == nil && info.Size() > 0 {
+				return nil
+			}
+			lastErr = fmt.Errorf("Edge-TTS không tạo được dữ liệu âm thanh cho phần văn bản")
+		} else if contextErr == context.DeadlineExceeded {
+			lastErr = formatEdgeTTSProcessError("quá thời gian chờ tổng hợp phần văn bản", output)
+		} else {
+			lastErr = formatEdgeTTSProcessError(err.Error(), output)
 		}
-		return fmt.Errorf("Edge-TTS không thể tổng hợp phần văn bản; hãy kiểm tra kết nối Internet và cấu hình giọng đọc")
+
+		if attempt < 2 {
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
-	info, err := os.Stat(outputPath)
-	if err != nil || info.Size() == 0 {
-		return fmt.Errorf("Edge-TTS không tạo được dữ liệu âm thanh cho phần văn bản")
+	return fmt.Errorf("không thể tổng hợp sau 2 lần thử: %w", lastErr)
+}
+
+func formatEdgeTTSProcessError(reason string, output []byte) error {
+	diagnostic := strings.TrimSpace(string(output))
+	if diagnostic != "" {
+		const maxDiagnosticRunes = 1200
+		runes := []rune(diagnostic)
+		if len(runes) > maxDiagnosticRunes {
+			diagnostic = string(runes[:maxDiagnosticRunes]) + "…"
+		}
+		return fmt.Errorf("Edge-TTS không thể tổng hợp phần văn bản (%s). Chi tiết kỹ thuật: %s", reason, diagnostic)
 	}
-	return nil
+	return fmt.Errorf("Edge-TTS không thể tổng hợp phần văn bản (%s)", reason)
 }
 
 func ExportTextToAudioWithProgress(voiceID, textContent, outputPath string, onProgress func(current, total int, msg string)) error {

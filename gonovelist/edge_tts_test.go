@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -23,6 +24,35 @@ func TestFormatEdgeTTSAdjustment(t *testing.T) {
 		if got := formatEdgeTTSAdjustment(test.value); got != test.want {
 			t.Errorf("formatEdgeTTSAdjustment(%d) = %q, muốn %q", test.value, got, test.want)
 		}
+	}
+}
+
+func TestFormatEdgeTTSProcessErrorIncludesBoundedDiagnostic(t *testing.T) {
+	diagnostic := strings.Repeat("lỗi mạng ", 200)
+	err := formatEdgeTTSProcessError("exit status 1", []byte(diagnostic))
+	if !strings.Contains(err.Error(), "Chi tiết kỹ thuật:") {
+		t.Fatalf("lỗi chưa có phần chẩn đoán: %v", err)
+	}
+	if len([]rune(err.Error())) > 1400 {
+		t.Fatalf("thông báo lỗi vượt giới hạn dự kiến")
+	}
+}
+
+func TestEdgeTTSSynthesisIntegration(t *testing.T) {
+	if os.Getenv("GONOVELIST_RUN_EDGE_TTS_INTEGRATION") != "1" {
+		t.Skip("đặt GONOVELIST_RUN_EDGE_TTS_INTEGRATION=1 để chạy kiểm tra dịch vụ Edge-TTS thật")
+	}
+	command, err := resolveEdgeTTSCommand()
+	if err != nil {
+		t.Fatalf("không phân giải được Edge-TTS: %v", err)
+	}
+	outputPath := t.TempDir() + string(os.PathSeparator) + "kiem-tra.mp3"
+	if err := synthesizeSpeechChunk(command, "vi-VN-HoaiMyNeural", "Xin chào.", outputPath, 0, 0); err != nil {
+		t.Fatalf("tổng hợp kiểm tra thất bại: %v", err)
+	}
+	info, err := os.Stat(outputPath)
+	if err != nil || info.Size() == 0 {
+		t.Fatalf("không tạo được MP3 kiểm tra: %v", err)
 	}
 }
 

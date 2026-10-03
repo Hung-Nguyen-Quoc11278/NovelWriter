@@ -1603,7 +1603,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 
 	acts, err := ui.store.ListActs(ui.activeProject.ID)
 	if err != nil {
-		dialog.ShowError(err, ui.window)
+		ui.showErrorDialog(err)
 		return
 	}
 
@@ -1743,7 +1743,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 		ext := FormatExtension(selectedFormat)
 		fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 			if err != nil {
-				dialog.ShowError(err, ui.window)
+				ui.showErrorDialog(err)
 				return
 			}
 			if writer == nil {
@@ -1756,6 +1756,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 			}
 			pathEntry.SetText(selectedPath)
 		}, ui.window)
+		attachWindowRefreshOnClose(fd, ui.window)
 		fd.SetFileName(filepath.Base(pathEntry.Text))
 		fd.SetFilter(storage.NewExtensionFileFilter([]string{ext}))
 		fd.Show()
@@ -1825,11 +1826,11 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 
 		data, ms, err := ui.store.ExportManuscriptBytes(ui.activeProject, opts)
 		if err != nil {
-			dialog.ShowError(err, ui.window)
+			ui.showErrorDialog(err)
 			return
 		}
 		if err := os.WriteFile(opts.OutputPath, data, 0644); err != nil {
-			dialog.ShowError(err, ui.window)
+			ui.showErrorDialog(err)
 			return
 		}
 
@@ -1837,7 +1838,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 		if ui.statusFooter != nil {
 			ui.statusFooter.SetText(fmt.Sprintf("Đã xuất bản (%s) ra tệp: %s", ms.ScopeLabel, opts.OutputPath))
 		}
-		dialog.ShowInformation(
+		ui.showInformationDialog(
 			"Xuất bản thảo thành công",
 			fmt.Sprintf(
 				"Định dạng: %s\nPhạm vi xuất bản: %s\nSố cảnh đã xuất: %d cảnh (%d từ)\nTệp đích: %s",
@@ -1847,7 +1848,6 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 				ms.TotalWords,
 				opts.OutputPath,
 			),
-			ui.window,
 		)
 	})
 	confirmBtn.Importance = widget.HighImportance
@@ -1862,6 +1862,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 	)
 
 	exportPopup = dialog.NewCustomWithoutButtons("Xuất Bản Thảo — "+ui.activeProject.Title, dialogBody, ui.window)
+	ui.attachLayoutRefreshOnClose(exportPopup)
 	exportPopup.Resize(fyne.NewSize(660, 540))
 	exportPopup.Show()
 }
@@ -2391,4 +2392,3 @@ func wrapRichSpansFirstLinePt(m *ttfFontMetrics, spans []RichSpan, fontSize floa
 
 	return lines
 }
-

@@ -67,6 +67,7 @@ type ResponsiveHeaderRowLayout struct {
 	currentWidth       float32
 	lastNotifiedHeight float32
 	onHeightChanged    func()
+	refreshPending     bool
 }
 
 func NewResponsiveHeaderRowLayout(titleMinWidth, gapX, gapY float32, onHeightChanged func()) *ResponsiveHeaderRowLayout {
@@ -213,12 +214,25 @@ func (l *ResponsiveHeaderRowLayout) Layout(objects []fyne.CanvasObject, size fyn
 	reqH := l.computeLayout(objects, size.Width, true)
 	if size.Width > 80 && math.Abs(float64(reqH-size.Height)) > 1.0 && math.Abs(float64(reqH-l.lastNotifiedHeight)) > 1.0 {
 		l.lastNotifiedHeight = reqH
-		if l.onHeightChanged != nil {
-			l.onHeightChanged()
-		}
+		l.scheduleHeightRefresh()
 	} else if math.Abs(float64(reqH-size.Height)) <= 1.0 {
 		l.lastNotifiedHeight = reqH
 	}
+}
+
+func (l *ResponsiveHeaderRowLayout) scheduleHeightRefresh() {
+	if l.onHeightChanged == nil || l.refreshPending {
+		return
+	}
+	l.refreshPending = true
+	go func() {
+		fyne.Do(func() {
+			l.refreshPending = false
+			if l.onHeightChanged != nil {
+				l.onHeightChanged()
+			}
+		})
+	}()
 }
 
 func (l *ResponsiveHeaderRowLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
@@ -237,6 +251,7 @@ type ResponsiveToolbarWrapLayout struct {
 	currentWidth       float32
 	lastNotifiedHeight float32
 	onHeightChanged    func()
+	refreshPending     bool
 }
 
 func NewResponsiveToolbarWrapLayout(gapX, gapY float32, pushLastRight bool, onHeightChanged func()) *ResponsiveToolbarWrapLayout {
@@ -354,12 +369,25 @@ func (l *ResponsiveToolbarWrapLayout) Layout(objects []fyne.CanvasObject, size f
 	_, reqH := l.computeWrap(objects, size.Width, true)
 	if size.Width > 80 && math.Abs(float64(reqH-size.Height)) > 1.0 && math.Abs(float64(reqH-l.lastNotifiedHeight)) > 1.0 {
 		l.lastNotifiedHeight = reqH
-		if l.onHeightChanged != nil {
-			l.onHeightChanged()
-		}
+		l.scheduleHeightRefresh()
 	} else if math.Abs(float64(reqH-size.Height)) <= 1.0 {
 		l.lastNotifiedHeight = reqH
 	}
+}
+
+func (l *ResponsiveToolbarWrapLayout) scheduleHeightRefresh() {
+	if l.onHeightChanged == nil || l.refreshPending {
+		return
+	}
+	l.refreshPending = true
+	go func() {
+		fyne.Do(func() {
+			l.refreshPending = false
+			if l.onHeightChanged != nil {
+				l.onHeightChanged()
+			}
+		})
+	}()
 }
 
 func (l *ResponsiveToolbarWrapLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
@@ -370,13 +398,15 @@ func (l *ResponsiveToolbarWrapLayout) MinSize(objects []fyne.CanvasObject) fyne.
 // EditorPanel quản lý trình soạn thảo văn xuôi, bộ tự động lưu (auto-save),
 // bảng Ngữ cảnh Cảnh (Nhân vật, Địa điểm, Vật phẩm, Sự kiện, POV, Trạng thái) và Ghi chú bên lề.
 type EditorPanel struct {
-	store     *Store
-	window    fyne.Window
-	projectID int64
-	onSaved   func()
+	store         *Store
+	window        fyne.Window
+	projectID     int64
+	onSaved       func()
 	onAudioExport func()
 
 	mu          sync.Mutex
+	saveMu      sync.Mutex
+	saveVersion uint64
 	activeScene *Scene
 	loading     bool
 	saveTimer   *time.Timer
@@ -1039,45 +1069,61 @@ func (ep *EditorPanel) updateLiveWordCounts() {
 
 func (ep *EditorPanel) scheduleAutoSave() {
 	ep.mu.Lock()
-	defer ep.mu.Unlock()
-
 	if ep.loading || ep.activeScene == nil {
+		ep.mu.Unlock()
 		return
 	}
 
+	ep.saveVersion++
+	version := ep.saveVersion
 	ep.saveStateLabel.SetText("Đang chờ tự động lưu...")
 	if ep.saveTimer != nil {
 		ep.saveTimer.Stop()
 	}
 	ep.saveTimer = time.AfterFunc(900*time.Millisecond, func() {
-		// Nếu người dùng vẫn đang gõ liên tục, hoãn thêm một nhịp ngắn để tránh tranh chấp trạng thái con trỏ
-		if ep.proseEntry != nil && ep.proseEntry.IsActivelyTyping(650*time.Millisecond) {
-			ep.scheduleAutoSave()
-			return
-		}
-		ep.FlushPendingSave()
+		fyne.Do(func() {
+			ep.mu.Lock()
+			isCurrent := version == ep.saveVersion && !ep.loading && ep.activeScene != nil
+			ep.mu.Unlock()
+			if !isCurrent {
+				return
+			}
+
+			if ep.proseEntry != nil && ep.proseEntry.IsActivelyTyping(650*time.Millisecond) {
+				ep.scheduleAutoSave()
+				return
+			}
+
+			snapshot, ok := ep.captureSceneSaveSnapshot()
+			if ok {
+				go ep.persistSceneSave(snapshot)
+			}
+		})
 	})
+	ep.mu.Unlock()
 }
 
-// FlushPendingSave ghi ngay lập tức mọi thay đổi của Cảnh (bao gồm Vật phẩm & Sự kiện trong cảnh) xuống SQLite
-// mà vẫn bảo toàn tuyệt đối vị trí con trỏ (caret) trên dòng đang chọn của người dùng.
-func (ep *EditorPanel) FlushPendingSave() {
+type sceneSaveSnapshot struct {
+	scene        Scene
+	version      uint64
+	cursorRow    int
+	cursorColumn int
+}
+
+// captureSceneSaveSnapshot chỉ đọc widget từ luồng giao diện và tạo bản sao dữ liệu độc lập để ghi nền.
+func (ep *EditorPanel) captureSceneSaveSnapshot() (sceneSaveSnapshot, bool) {
 	ep.mu.Lock()
+	defer ep.mu.Unlock()
 	if ep.loading || ep.activeScene == nil {
-		ep.mu.Unlock()
-		return
-	}
-	if ep.saveTimer != nil {
-		ep.saveTimer.Stop()
-		ep.saveTimer = nil
+		return sceneSaveSnapshot{}, false
 	}
 
-	savedRow, savedCol := 0, 0
+	snapshot := sceneSaveSnapshot{scene: *ep.activeScene, version: ep.saveVersion}
 	if ep.proseEntry != nil {
-		savedRow, savedCol = ep.proseEntry.GetLockedCursor()
+		snapshot.cursorRow, snapshot.cursorColumn = ep.proseEntry.GetLockedCursor()
 	}
 
-	sc := *ep.activeScene
+	sc := &snapshot.scene
 	sc.Title = ep.titleEntry.Text
 	sc.Summary = ep.summaryEntry.Text
 	sc.Content = ep.proseEntry.Text
@@ -1117,29 +1163,78 @@ func (ep *EditorPanel) FlushPendingSave() {
 		}
 	}
 	sc.EventIDs = eventIDs
+	return snapshot, true
+}
+
+func (ep *EditorPanel) persistSceneSave(snapshot sceneSaveSnapshot) {
+	ep.saveMu.Lock()
+	defer ep.saveMu.Unlock()
+
+	ep.mu.Lock()
+	isCurrent := snapshot.version == ep.saveVersion
+	ep.mu.Unlock()
+	if !isCurrent {
+		return
+	}
+
+	err := ep.store.UpdateScene(&snapshot.scene)
+	fyne.Do(func() {
+		ep.applySceneSaveResult(snapshot, err, false)
+	})
+}
+
+func (ep *EditorPanel) applySceneSaveResult(snapshot sceneSaveSnapshot, saveErr error, restoreCursor bool) {
+	ep.mu.Lock()
+	isCurrent := ep.activeScene != nil && ep.activeScene.ID == snapshot.scene.ID && ep.saveVersion == snapshot.version
+	if isCurrent && saveErr == nil {
+		ep.activeScene.WordCount = snapshot.scene.WordCount
+		ep.activeScene.TargetWords = snapshot.scene.TargetWords
+		ep.activeScene.CharacterIDs = snapshot.scene.CharacterIDs
+		ep.activeScene.PropIDs = snapshot.scene.PropIDs
+		ep.activeScene.EventIDs = snapshot.scene.EventIDs
+	}
+	ep.mu.Unlock()
+	if !isCurrent {
+		return
+	}
+	if saveErr != nil {
+		ep.saveStateLabel.SetText("Không thể tự động lưu dữ liệu.")
+		return
+	}
+
+	ep.saveStateLabel.SetText(fmt.Sprintf("Đã tự động lưu lúc %s", time.Now().Format("15:04:05")))
+	ep.updateLiveWordCounts()
+	if ep.onSaved != nil {
+		ep.onSaved()
+	}
+	if restoreCursor && ep.proseEntry != nil {
+		ep.proseEntry.RestoreLockedCursor(snapshot.cursorRow, snapshot.cursorColumn)
+	}
+}
+
+// FlushPendingSave đồng bộ nội dung hiện tại xuống SQLite trước khi đổi Cảnh hoặc xuất bản thảo.
+func (ep *EditorPanel) FlushPendingSave() {
+	ep.mu.Lock()
+	if ep.loading || ep.activeScene == nil {
+		ep.mu.Unlock()
+		return
+	}
+	if ep.saveTimer != nil {
+		ep.saveTimer.Stop()
+		ep.saveTimer = nil
+	}
+	ep.saveVersion++
 	ep.mu.Unlock()
 
-	if err := ep.store.UpdateScene(&sc); err == nil {
-		ep.mu.Lock()
-		if ep.activeScene != nil && ep.activeScene.ID == sc.ID {
-			ep.activeScene.WordCount = sc.WordCount
-			ep.activeScene.TargetWords = sc.TargetWords
-			ep.activeScene.CharacterIDs = sc.CharacterIDs
-			ep.activeScene.PropIDs = sc.PropIDs
-			ep.activeScene.EventIDs = sc.EventIDs
-		}
-		ep.mu.Unlock()
+	ep.saveMu.Lock()
+	defer ep.saveMu.Unlock()
 
-		ep.saveStateLabel.SetText(fmt.Sprintf("Đã tự động lưu lúc %s", time.Now().Format("15:04:05")))
-		ep.updateLiveWordCounts()
-		if ep.onSaved != nil {
-			ep.onSaved()
-		}
-		// Khôi phục lại tọa độ con trỏ đã khóa nếu bất kỳ lệnh Refresh nào làm trôi dòng đang chọn
-		if ep.proseEntry != nil {
-			ep.proseEntry.RestoreLockedCursor(savedRow, savedCol)
-		}
+	snapshot, ok := ep.captureSceneSaveSnapshot()
+	if !ok {
+		return
 	}
+	err := ep.store.UpdateScene(&snapshot.scene)
+	ep.applySceneSaveResult(snapshot, err, true)
 }
 
 func (ep *EditorPanel) findCharacterIDByName(name string) *int64 {

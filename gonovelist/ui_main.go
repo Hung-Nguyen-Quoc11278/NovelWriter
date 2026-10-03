@@ -62,15 +62,13 @@ func (l *ResponsiveWindowLayout) Layout(objects []fyne.CanvasObject, size fyne.S
 	// tự động giãn chuẩn xác mà không cần người dùng kéo tay viền cửa sổ.
 	settledSize := size
 	l.settleTimer = time.AfterFunc(45*time.Millisecond, func() {
-		if l.onResized != nil {
-			l.onResized(settledSize)
-		}
+		fyne.Do(func() {
+			if l.onResized != nil {
+				l.onResized(settledSize)
+			}
+		})
 	})
 	l.mu.Unlock()
-
-	if l.onResized != nil {
-		l.onResized(size)
-	}
 }
 
 // MinSize trả về kích thước tối thiểu hợp lý để không khóa cứng các thanh chia HSplit khi thu phóng.
@@ -180,7 +178,7 @@ func (ui *NovelistUI) buildMainMenu() {
 		fyne.NewMenuItem("Tạo tác phẩm mẫu Tiếng Việt", func() {
 			proj, err := ui.store.SeedVietnameseSampleProject()
 			if err != nil {
-				dialog.ShowError(err, ui.window)
+				ui.showErrorDialog(err)
 				return
 			}
 			ui.reloadProjectSelector(*proj)
@@ -459,18 +457,78 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 // ForceLayoutRefresh buộc toàn bộ cây giao diện (thanh bên trái, HSplit chính, HSplit soạn thảo
 // và thanh bên Ngữ cảnh Cảnh bên phải) tính toán lại kích thước và vẽ lại ngay lập tức.
 func (ui *NovelistUI) ForceLayoutRefresh() {
-	if ui.sidebarBox != nil {
-		ui.sidebarBox.Refresh()
-	}
-	if ui.editorPanel != nil {
-		ui.editorPanel.ForceLayoutRefresh()
+	if ui.window != nil && ui.window.Canvas() != nil && ui.rootContainer != nil {
+		ui.rootContainer.Resize(ui.window.Canvas().Size())
+		ui.rootContainer.Refresh()
 	}
 	if ui.mainSplit != nil {
 		ui.mainSplit.Refresh()
 	}
+	if ui.editorPanel != nil {
+		ui.editorPanel.ForceLayoutRefresh()
+	}
+	if ui.sidebarBox != nil {
+		ui.sidebarBox.Refresh()
+	}
 	if ui.rootContainer != nil {
 		ui.rootContainer.Refresh()
 	}
+}
+
+func (ui *NovelistUI) refreshLayoutAfterDialog() {
+	ui.ForceLayoutRefresh()
+	if ui.window == nil || ui.window.Canvas() == nil {
+		return
+	}
+	if content := ui.window.Content(); content != nil {
+		ui.window.Canvas().Refresh(content)
+	}
+}
+
+func (ui *NovelistUI) attachLayoutRefreshOnClose(d interface{ SetOnClosed(func()) }) {
+	d.SetOnClosed(ui.refreshLayoutAfterDialog)
+}
+
+func (ui *NovelistUI) showFormDialog(title, confirm, dismiss string, items []*widget.FormItem, callback func(bool)) {
+	d := dialog.NewForm(title, confirm, dismiss, items, callback, ui.window)
+	ui.attachLayoutRefreshOnClose(d)
+	d.Show()
+}
+
+func (ui *NovelistUI) showErrorDialog(err error) {
+	d := dialog.NewError(err, ui.window)
+	ui.attachLayoutRefreshOnClose(d)
+	d.Show()
+}
+
+func (ui *NovelistUI) showInformationDialog(title, message string) {
+	d := dialog.NewInformation(title, message, ui.window)
+	ui.attachLayoutRefreshOnClose(d)
+	d.Show()
+}
+
+func attachWindowRefreshOnClose(d interface{ SetOnClosed(func()) }, window fyne.Window) {
+	d.SetOnClosed(func() {
+		if window == nil || window.Canvas() == nil {
+			return
+		}
+		if content := window.Content(); content != nil {
+			content.Refresh()
+			window.Canvas().Refresh(content)
+		}
+	})
+}
+
+func showWindowErrorDialog(err error, window fyne.Window) {
+	d := dialog.NewError(err, window)
+	attachWindowRefreshOnClose(d, window)
+	d.Show()
+}
+
+func showWindowFormDialog(title, confirm, dismiss string, items []*widget.FormItem, callback func(bool), window fyne.Window) {
+	d := dialog.NewForm(title, confirm, dismiss, items, callback, window)
+	attachWindowRefreshOnClose(d, window)
+	d.Show()
 }
 
 func (ui *NovelistUI) reloadProjectSelector(active Project) {
@@ -737,7 +795,7 @@ func (ui *NovelistUI) showNewProjectDialog() {
 	genreEntry := NewVietEntry()
 	genreEntry.SetPlaceHolder("Tiểu thuyết lịch sử / Văn học đương đại...")
 
-	dialog.ShowForm("Khởi tạo Tác phẩm Mới", "Tạo tác phẩm", "Hủy", []*widget.FormItem{
+	ui.showFormDialog("Khởi tạo Tác phẩm Mới", "Tạo tác phẩm", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Tên tác phẩm", titleEntry),
 		widget.NewFormItem("Tác giả", authorEntry),
 		widget.NewFormItem("Thể loại", genreEntry),
@@ -747,7 +805,7 @@ func (ui *NovelistUI) showNewProjectDialog() {
 		}
 		proj, err := ui.store.CreateProject(titleEntry.Text, authorEntry.Text, genreEntry.Text, "", 50000)
 		if err != nil {
-			dialog.ShowError(err, ui.window)
+			ui.showErrorDialog(err)
 			return
 		}
 		act, _ := ui.store.CreateAct(proj.ID, "Hồi I — Khởi Đầu")
@@ -755,30 +813,30 @@ func (ui *NovelistUI) showNewProjectDialog() {
 		_, _ = ui.store.CreateScene(ch.ID, "Cảnh 1: Mở đầu", 1200)
 
 		ui.reloadProjectSelector(*proj)
-	}, ui.window)
+	})
 }
 
 func (ui *NovelistUI) showAddActDialog() {
 	entry := NewVietEntry()
 	entry.SetPlaceHolder("VD: Hồi III — Ngày Trở Về")
-	dialog.ShowForm("Thêm Hồi Mới", "Tạo Hồi", "Hủy", []*widget.FormItem{
+	ui.showFormDialog("Thêm Hồi Mới", "Tạo Hồi", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Tiêu đề Hồi", entry),
 	}, func(ok bool) {
 		if !ok || entry.Text == "" {
 			return
 		}
 		if _, err := ui.store.CreateAct(ui.activeProject.ID, entry.Text); err != nil {
-			dialog.ShowError(err, ui.window)
+			ui.showErrorDialog(err)
 			return
 		}
 		ui.RefreshTreeData()
-	}, ui.window)
+	})
 }
 
 func (ui *NovelistUI) showAddChapterDialog() {
 	actID, err := ui.resolveTargetActID()
 	if err != nil {
-		dialog.ShowError(err, ui.window)
+		ui.showErrorDialog(err)
 		return
 	}
 	titleEntry := NewVietEntry()
@@ -786,7 +844,7 @@ func (ui *NovelistUI) showAddChapterDialog() {
 	targetEntry := widget.NewEntry()
 	targetEntry.SetText("3000")
 
-	dialog.ShowForm("Thêm Chương Mới", "Tạo Chương", "Hủy", []*widget.FormItem{
+	ui.showFormDialog("Thêm Chương Mới", "Tạo Chương", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Tiêu đề Chương", titleEntry),
 		widget.NewFormItem("Mục tiêu số từ", targetEntry),
 	}, func(ok bool) {
@@ -796,17 +854,17 @@ func (ui *NovelistUI) showAddChapterDialog() {
 		var target int
 		_, _ = fmt.Sscanf(targetEntry.Text, "%d", &target)
 		if _, err := ui.store.CreateChapter(actID, titleEntry.Text, target); err != nil {
-			dialog.ShowError(err, ui.window)
+			ui.showErrorDialog(err)
 			return
 		}
 		ui.RefreshTreeData()
-	}, ui.window)
+	})
 }
 
 func (ui *NovelistUI) showAddSceneDialog() {
 	chID, err := ui.resolveTargetChapterID()
 	if err != nil {
-		dialog.ShowError(err, ui.window)
+		ui.showErrorDialog(err)
 		return
 	}
 	titleEntry := NewVietEntry()
@@ -814,7 +872,7 @@ func (ui *NovelistUI) showAddSceneDialog() {
 	targetEntry := widget.NewEntry()
 	targetEntry.SetText("1200")
 
-	dialog.ShowForm("Thêm Cảnh Mới", "Tạo Cảnh", "Hủy", []*widget.FormItem{
+	ui.showFormDialog("Thêm Cảnh Mới", "Tạo Cảnh", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Tiêu đề Cảnh", titleEntry),
 		widget.NewFormItem("Mục tiêu số từ", targetEntry),
 	}, func(ok bool) {
@@ -825,12 +883,12 @@ func (ui *NovelistUI) showAddSceneDialog() {
 		_, _ = fmt.Sscanf(targetEntry.Text, "%d", &target)
 		sc, err := ui.store.CreateScene(chID, titleEntry.Text, target)
 		if err != nil {
-			dialog.ShowError(err, ui.window)
+			ui.showErrorDialog(err)
 			return
 		}
 		ui.RefreshTreeData()
 		ui.tree.Select(MakeNodeUID("scene", sc.ID))
-	}, ui.window)
+	})
 }
 
 func (ui *NovelistUI) showRenameNodeDialog() {
@@ -841,7 +899,7 @@ func (ui *NovelistUI) showRenameNodeDialog() {
 	entry := NewVietEntry()
 	entry.SetText(node.Title)
 
-	dialog.ShowForm("Đổi Tên Mục", "Lưu thay đổi", "Hủy", []*widget.FormItem{
+	ui.showFormDialog("Đổi Tên Mục", "Lưu thay đổi", "Hủy", []*widget.FormItem{
 		widget.NewFormItem("Tiêu đề mới", entry),
 	}, func(confirmed bool) {
 		if !confirmed || entry.Text == "" {
@@ -858,11 +916,11 @@ func (ui *NovelistUI) showRenameNodeDialog() {
 			_ = ui.editorPanel.LoadScene(node.DatabaseID, ui.activeProject.ID)
 		}
 		if err != nil {
-			dialog.ShowError(err, ui.window)
+			ui.showErrorDialog(err)
 			return
 		}
 		ui.RefreshTreeData()
-	}, ui.window)
+	})
 }
 
 func (ui *NovelistUI) moveSelectedNode(direction int) {
@@ -880,7 +938,7 @@ func (ui *NovelistUI) moveSelectedNode(direction int) {
 		err = ui.store.MoveScene(node.DatabaseID, direction)
 	}
 	if err != nil {
-		dialog.ShowError(err, ui.window)
+		ui.showErrorDialog(err)
 		return
 	}
 	ui.RefreshTreeData()
@@ -891,7 +949,7 @@ func (ui *NovelistUI) confirmDeleteNode() {
 	if !ok {
 		return
 	}
-	dialog.ShowConfirm(
+	confirmDialog := dialog.NewConfirm(
 		"Xác nhận xóa",
 		fmt.Sprintf("Bạn có chắc chắn muốn xóa %q và toàn bộ các mục con bên trong?", node.Title),
 		func(confirmed bool) {
@@ -908,7 +966,7 @@ func (ui *NovelistUI) confirmDeleteNode() {
 				err = ui.store.DeleteScene(node.DatabaseID)
 			}
 			if err != nil {
-				dialog.ShowError(err, ui.window)
+				ui.showErrorDialog(err)
 				return
 			}
 			ui.selectedUID = ""
@@ -917,6 +975,8 @@ func (ui *NovelistUI) confirmDeleteNode() {
 		},
 		ui.window,
 	)
+	ui.attachLayoutRefreshOnClose(confirmDialog)
+	confirmDialog.Show()
 }
 
 func (ui *NovelistUI) exportManuscript(format string) {
