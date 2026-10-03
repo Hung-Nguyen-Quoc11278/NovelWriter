@@ -31,7 +31,7 @@ func (ui *NovelistUI) ApplyThemeMode(mode ThemeMode) {
 		ui.window.Canvas().Refresh(ui.window.Content())
 	}
 	if ui.statusFooter != nil {
-		ui.statusFooter.SetText(fmt.Sprintf("Đã áp dụng chủ đề: %s (Cỡ chữ %dpx)", ThemeModeLabel(mode), int(ui.fontTheme.TextSize())))
+		ui.statusFooter.SetText(fmt.Sprintf("Đã áp dụng chủ đề: %s.", ThemeModeLabel(mode)))
 	}
 }
 

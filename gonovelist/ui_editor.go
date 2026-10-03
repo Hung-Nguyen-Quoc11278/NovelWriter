@@ -794,11 +794,14 @@ func (ep *EditorPanel) ForceLayoutRefresh() {
 		return
 	}
 
-	savedRow, savedCol := 0, 0
+	ep.UpdateResponsiveLayoutWidth()
+	ep.splitContainer.Refresh()
 	if ep.proseEntry != nil {
-		savedRow, savedCol = ep.proseEntry.GetLockedCursor()
+		ep.proseEntry.Refresh()
 	}
+}
 
+func (ep *EditorPanel) UpdateResponsiveLayoutWidth() {
 	if ep.centerEditor != nil {
 		availW := ep.centerEditor.Size().Width
 		if availW > 80 {
@@ -809,42 +812,6 @@ func (ep *EditorPanel) ForceLayoutRefresh() {
 				ep.toolbarWrapLayout.SetCurrentWidth(availW)
 			}
 		}
-	}
-
-	if ep.headerTopRow != nil {
-		ep.headerTopRow.Refresh()
-	}
-	if ep.formattingToolbar != nil {
-		ep.formattingToolbar.Refresh()
-	}
-	if ep.summaryRow != nil {
-		ep.summaryRow.Refresh()
-	}
-	if ep.headerForm != nil {
-		ep.headerForm.Refresh()
-	}
-	if ep.footerStats != nil {
-		ep.footerStats.Refresh()
-	}
-	if ep.centerEditor != nil {
-		ep.centerEditor.Refresh()
-	}
-	if ep.contextVBox != nil {
-		ep.contextVBox.Refresh()
-	}
-	if ep.contextScroll != nil {
-		ep.contextScroll.Refresh()
-	}
-	if ep.notesTabContent != nil {
-		ep.notesTabContent.Refresh()
-	}
-	if ep.inspectorTabs != nil {
-		ep.inspectorTabs.Refresh()
-	}
-	ep.splitContainer.Refresh()
-
-	if ep.proseEntry != nil {
-		ep.proseEntry.RestoreLockedCursor(savedRow, savedCol)
 	}
 }
 

@@ -1836,7 +1836,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 
 		exportPopup.Hide()
 		if ui.statusFooter != nil {
-			ui.statusFooter.SetText(fmt.Sprintf("Đã xuất bản (%s) ra tệp: %s", ms.ScopeLabel, opts.OutputPath))
+			ui.statusFooter.SetText(fmt.Sprintf("Đã xuất bản thành công (%s).", ms.ScopeLabel))
 		}
 		ui.showInformationDialog(
 			"Xuất bản thảo thành công",

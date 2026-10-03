@@ -63,10 +63,11 @@ var VietnameseVoicePresets = []VietnameseVoicePreset{
 type AudioExportScope string
 
 const (
-	AudioScopeCurrentScene   AudioExportScope = "Cảnh hiện tại"
-	AudioScopeCurrentChapter AudioExportScope = "Chương hiện tại"
-	AudioScopeCurrentAct     AudioExportScope = "Hồi hiện tại"
-	AudioScopeFullNovel      AudioExportScope = "Toàn bộ tác phẩm"
+	AudioScopeCurrentScene       AudioExportScope = "Cảnh hiện tại"
+	AudioScopeCurrentChapter     AudioExportScope = "Chương hiện tại"
+	AudioScopeCurrentAct         AudioExportScope = "Hồi hiện tại"
+	AudioScopeFullNovel          AudioExportScope = "Toàn bộ tác phẩm"
+	audioExportSuccessFooterText                  = "Đã xuất audio thành công."
 )
 
 // AllAudioExportScopes trả về danh sách các phạm vi xuất bản audio cho widget.Select.
@@ -683,7 +684,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 				PlayUIClickSound()
 				statusLabel.SetText("✅ Xuất file thành công!")
 				if ui.statusFooter != nil {
-					ui.statusFooter.SetText(fmt.Sprintf("Đã xuất audio: %s (%.2f MB)", filepath.Base(outPath), fileSizeMB))
+					ui.statusFooter.SetText(audioExportSuccessFooterText)
 				}
 
 				audioDialog.Hide()

@@ -454,35 +454,33 @@ func (ui *NovelistUI) buildLayout(projects []Project) fyne.CanvasObject {
 	return ui.rootContainer
 }
 
-// ForceLayoutRefresh buộc toàn bộ cây giao diện (thanh bên trái, HSplit chính, HSplit soạn thảo
-// và thanh bên Ngữ cảnh Cảnh bên phải) tính toán lại kích thước và vẽ lại ngay lập tức.
+// ForceLayoutRefresh đồng bộ kích thước gốc với canvas rồi để một lượt refresh đệ quy bố trí toàn cây.
 func (ui *NovelistUI) ForceLayoutRefresh() {
-	if ui.window != nil && ui.window.Canvas() != nil && ui.rootContainer != nil {
-		ui.rootContainer.Resize(ui.window.Canvas().Size())
-		ui.rootContainer.Refresh()
+	if ui.window == nil || ui.window.Canvas() == nil || ui.rootContainer == nil {
+		return
 	}
-	if ui.mainSplit != nil {
-		ui.mainSplit.Refresh()
+
+	savedRow, savedCol := 0, 0
+	if ui.editorPanel != nil && ui.editorPanel.proseEntry != nil {
+		savedRow, savedCol = ui.editorPanel.proseEntry.GetLockedCursor()
+	}
+
+	canvasSize := ui.window.Canvas().Size()
+	if ui.rootContainer.Size() != canvasSize {
+		ui.rootContainer.Resize(canvasSize)
 	}
 	if ui.editorPanel != nil {
-		ui.editorPanel.ForceLayoutRefresh()
+		ui.editorPanel.UpdateResponsiveLayoutWidth()
 	}
-	if ui.sidebarBox != nil {
-		ui.sidebarBox.Refresh()
-	}
-	if ui.rootContainer != nil {
-		ui.rootContainer.Refresh()
+	ui.rootContainer.Refresh()
+
+	if ui.editorPanel != nil && ui.editorPanel.proseEntry != nil {
+		ui.editorPanel.proseEntry.RestoreLockedCursor(savedRow, savedCol)
 	}
 }
 
 func (ui *NovelistUI) refreshLayoutAfterDialog() {
 	ui.ForceLayoutRefresh()
-	if ui.window == nil || ui.window.Canvas() == nil {
-		return
-	}
-	if content := ui.window.Content(); content != nil {
-		ui.window.Canvas().Refresh(content)
-	}
 }
 
 func (ui *NovelistUI) attachLayoutRefreshOnClose(d interface{ SetOnClosed(func()) }) {
