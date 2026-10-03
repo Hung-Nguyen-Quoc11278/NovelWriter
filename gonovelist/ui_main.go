@@ -190,6 +190,9 @@ func (ui *NovelistUI) buildMainMenu() {
 		fyne.NewMenuItem("Xuất bản ra ODT (.odt)...", func() {
 			ui.ShowExportDialog(ExportFormatODT)
 		}),
+		fyne.NewMenuItem("Xuất bản ra Word (.docx)...", func() {
+			ui.ShowExportDialog(ExportFormatDOCX)
+		}),
 		fyne.NewMenuItem("Xuất bản ra PDF (.pdf)...", func() {
 			ui.ShowExportDialog(ExportFormatPDF)
 		}),

@@ -39,7 +39,7 @@ export const PROJECT_TREE_LAYOUT = `gonovelist/
 ├── vietnamese_input.go    # Bộ gõ Tiếng Việt Telex / Fcitx5 UTF-8 chuẩn xác & chống nhảy dòng con trỏ
 ├── models.go              # Các struct miền dữ liệu (Project, Act, Chapter, Scene, Character, Location, Prop, Event, Tag)
 ├── database.go            # Tầng truy xuất SQLite, миграции tự động, quản lý Thẻ phân tách theo danh mục (entity_type)
-├── export.go              # Hệ thống xuất bản đa định dạng (.txt, .odt, .pdf, .epub, .md, .html) & chọn Phạm vi xuất bản
+├── export.go              # Hệ thống xuất bản đa định dạng (.txt, .odt, .docx, .pdf, .epub, .md, .html) & chọn Phạm vi xuất bản
 ├── ui_worldbuilding.go    # Trung tâm Xây dựng Thế giới đa tab & Hệ thống Thẻ màu sắc cô lập theo danh mục
 ├── ui_main.go             # Cửa sổ chính Fyne v2, menu Cài đặt, menu Xuất bản đa định dạng & cây phân cấp
 └── ui_editor.go           # Trình soạn thảo văn xuôi Tiếng Việt, thanh công cụ A-/A+, auto-save 750ms & Ngữ cảnh Cảnh`;
@@ -125,7 +125,7 @@ export const GO_SOURCE_FILES: GoSourceFile[] = [
     path: 'gonovelist/export.go',
     layer: 'Hệ Thống Xuất Bản Đa Định Dạng',
     summary:
-      'Hệ thống xuất bản thảo chuyên nghiệp ra Plain Text (.txt), OpenDocument Text (.odt), PDF (.pdf nhúng TrueType Unicode Tiếng Việt), EPUB (.epub), Markdown (.md), HTML (.html) kèm hộp thoại chọn Phạm vi xuất bản (Toàn bộ tác phẩm / Theo Hồi chỉ định / Chương-Cảnh hiện tại).',
+      'Hệ thống xuất bản thảo ra Plain Text (.txt), OpenDocument Text (.odt), Microsoft Word OOXML (.docx), PDF (.pdf nhúng TrueType Unicode Tiếng Việt), EPUB (.epub), Markdown (.md), HTML (.html), kèm lựa chọn phạm vi và bảo toàn định dạng văn bản phong phú.',
     code: exportGoRaw,
   },
   {

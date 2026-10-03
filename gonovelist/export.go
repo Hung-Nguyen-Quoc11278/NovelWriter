@@ -31,6 +31,7 @@ const (
 	ExportFormatMarkdown ExportFormat = "markdown"
 	ExportFormatHTML     ExportFormat = "html"
 	ExportFormatODT      ExportFormat = "odt"
+	ExportFormatDOCX     ExportFormat = "docx"
 	ExportFormatPDF      ExportFormat = "pdf"
 	ExportFormatEPUB     ExportFormat = "epub"
 )
@@ -90,6 +91,8 @@ func FormatLabel(format ExportFormat) string {
 		return "Trang web HTML (.html)"
 	case ExportFormatODT:
 		return "OpenDocument Text - LibreOffice (.odt)"
+	case ExportFormatDOCX:
+		return "Microsoft Word (.docx)"
 	case ExportFormatPDF:
 		return "Tài liệu PDF (.pdf)"
 	case ExportFormatEPUB:
@@ -110,6 +113,8 @@ func FormatExtension(format ExportFormat) string {
 		return ".html"
 	case ExportFormatODT:
 		return ".odt"
+	case ExportFormatDOCX:
+		return ".docx"
 	case ExportFormatPDF:
 		return ".pdf"
 	case ExportFormatEPUB:
@@ -305,6 +310,8 @@ func (s *Store) ExportManuscriptBytes(project Project, opts ExportOptions) ([]by
 		data, err = ExportManuscriptHTMLWithOptions(ms, opts)
 	case ExportFormatODT:
 		data, err = ExportManuscriptODT(ms, opts)
+	case ExportFormatDOCX:
+		data, err = ExportManuscriptDOCX(ms, opts)
 	case ExportFormatPDF:
 		data, err = ExportManuscriptPDF(ms, opts)
 	case ExportFormatEPUB:
@@ -645,6 +652,154 @@ func ExportManuscriptODT(ms *FilteredManuscript, opts ExportOptions) ([]byte, er
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// ExportManuscriptDOCX tạo gói Office Open XML tương thích Microsoft Word và LibreOffice Writer.
+func ExportManuscriptDOCX(ms *FilteredManuscript, opts ExportOptions) ([]byte, error) {
+	var document strings.Builder
+	document.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+`)
+	writeDOCXParagraph(&document, "Title", []RichSpan{{Text: ms.Project.Title, Bold: true}})
+
+	metaText := fmt.Sprintf("Tác giả: %s | Thể loại: %s | Phạm vi: %s | Tổng số từ: %d",
+		ms.Project.Author, ms.Project.Genre, ms.ScopeLabel, ms.TotalWords)
+	writeDOCXParagraph(&document, "Subtitle", []RichSpan{{Text: metaText, Italic: true}})
+	if opts.IncludeSynopsis && strings.TrimSpace(ms.Project.Synopsis) != "" {
+		writeDOCXParagraph(&document, "Quote", []RichSpan{{Text: strings.TrimSpace(ms.Project.Synopsis), Italic: true}})
+	}
+
+	for _, exportedAct := range ms.Acts {
+		writeDOCXParagraph(&document, "Heading1", []RichSpan{{Text: exportedAct.Act.Title, Bold: true}})
+		for _, exportedChapter := range exportedAct.Chapters {
+			writeDOCXParagraph(&document, "Heading2", []RichSpan{{Text: exportedChapter.Chapter.Title, Bold: true}})
+			for sceneIndex, scene := range exportedChapter.Scenes {
+				if opts.IncludeSceneTitle && strings.TrimSpace(scene.Title) != "" {
+					writeDOCXParagraph(&document, "Heading3", []RichSpan{{Text: scene.Title, Bold: true}})
+				}
+				for _, block := range ParseRichProseBlocks(scene.Content) {
+					switch block.Kind {
+					case RichBlockDivider:
+						writeDOCXParagraph(&document, "SceneSeparator", []RichSpan{{Text: "* * *"}})
+					case RichBlockHeading:
+						writeDOCXParagraph(&document, "Heading3", block.Spans)
+					case RichBlockQuote:
+						writeDOCXParagraph(&document, "Quote", block.Spans)
+					default:
+						writeDOCXParagraph(&document, "Normal", block.Spans)
+					}
+				}
+				if sceneIndex < len(exportedChapter.Scenes)-1 {
+					writeDOCXParagraph(&document, "SceneSeparator", []RichSpan{{Text: "* * *"}})
+				}
+			}
+		}
+	}
+
+	document.WriteString(`    <w:sectPr>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>
+    </w:sectPr>
+  </w:body>
+</w:document>`)
+
+	stylesXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr><w:rFonts w:ascii="Noto Serif" w:hAnsi="Noto Serif" w:eastAsia="Noto Serif"/><w:lang w:val="vi-VN"/></w:rPr></w:rPrDefault>
+    <w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Subtitle"/><w:qFormat/><w:pPr><w:jc w:val="center"/><w:spacing w:before="360" w:after="160"/></w:pPr><w:rPr><w:b/><w:sz w:val="48"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:jc w:val="center"/><w:spacing w:after="360"/></w:pPr><w:rPr><w:i/><w:color w:val="57534E"/><w:sz w:val="22"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="480" w:after="240"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="360" w:after="180"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="480" w:right="320"/><w:pBdr><w:left w:val="single" w:sz="12" w:space="8" w:color="8B3A2B"/></w:pBdr></w:pPr><w:rPr><w:i/><w:color w:val="3F3C36"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="SceneSeparator"><w:name w:val="Scene separator"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/><w:spacing w:before="240" w:after="240"/></w:pPr><w:rPr><w:color w:val="78716C"/></w:rPr></w:style>
+</w:styles>`
+
+	contentTypesXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+</Types>`
+	rootRelsXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+</Relationships>`
+	documentRelsXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`
+	corePropertiesXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>%s</dc:title>
+  <dc:creator>%s</dc:creator>
+  <dc:language>vi-VN</dc:language>
+  <dcterms:created xsi:type="dcterms:W3CDTF">%s</dcterms:created>
+</cp:coreProperties>`, escapeXML(ms.Project.Title), escapeXML(ms.Project.Author), ms.GeneratedAt.UTC().Format(time.RFC3339))
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	parts := []struct {
+		name string
+		data string
+	}{
+		{name: "[Content_Types].xml", data: contentTypesXML},
+		{name: "_rels/.rels", data: rootRelsXML},
+		{name: "docProps/core.xml", data: corePropertiesXML},
+		{name: "word/document.xml", data: document.String()},
+		{name: "word/styles.xml", data: stylesXML},
+		{name: "word/_rels/document.xml.rels", data: documentRelsXML},
+	}
+	for _, part := range parts {
+		if err := writeZipFile(zw, part.name, []byte(part.data)); err != nil {
+			_ = zw.Close()
+			return nil, fmt.Errorf("không thể đóng gói thành phần DOCX %s: %w", part.name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, fmt.Errorf("không thể hoàn tất tệp DOCX: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func writeDOCXParagraph(document *strings.Builder, style string, spans []RichSpan) {
+	document.WriteString("    <w:p>")
+	if style != "" {
+		document.WriteString(`<w:pPr><w:pStyle w:val="`)
+		document.WriteString(escapeXML(style))
+		document.WriteString(`"/></w:pPr>`)
+	}
+	for _, span := range spans {
+		if span.Text == "" {
+			continue
+		}
+		document.WriteString("<w:r>")
+		if span.Bold || span.Italic || span.Underline {
+			document.WriteString("<w:rPr>")
+			if span.Bold {
+				document.WriteString("<w:b/>")
+			}
+			if span.Italic {
+				document.WriteString("<w:i/>")
+			}
+			if span.Underline {
+				document.WriteString(`<w:u w:val="single"/>`)
+			}
+			document.WriteString("</w:rPr>")
+		}
+		document.WriteString(`<w:t xml:space="preserve">`)
+		document.WriteString(escapeXML(span.Text))
+		document.WriteString(`</w:t></w:r>`)
+	}
+	document.WriteString("</w:p>\n")
 }
 
 // ==================== 5. EPUB EBOOK (.epub) EXPORTER ====================
@@ -1623,6 +1778,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 	formatOptions := []string{
 		FormatLabel(ExportFormatTXT),
 		FormatLabel(ExportFormatODT),
+		FormatLabel(ExportFormatDOCX),
 		FormatLabel(ExportFormatPDF),
 		FormatLabel(ExportFormatEPUB),
 		FormatLabel(ExportFormatMarkdown),
@@ -1631,6 +1787,7 @@ func (ui *NovelistUI) ShowExportDialog(initialFormat ExportFormat) {
 	labelToFormat := map[string]ExportFormat{
 		FormatLabel(ExportFormatTXT):      ExportFormatTXT,
 		FormatLabel(ExportFormatODT):      ExportFormatODT,
+		FormatLabel(ExportFormatDOCX):     ExportFormatDOCX,
 		FormatLabel(ExportFormatPDF):      ExportFormatPDF,
 		FormatLabel(ExportFormatEPUB):     ExportFormatEPUB,
 		FormatLabel(ExportFormatMarkdown): ExportFormatMarkdown,
