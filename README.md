@@ -117,6 +117,5 @@ Có thể chạy kiểm tra tổng hợp thật qua dịch vụ Edge-TTS (cần 
 GONOVELIST_RUN_EDGE_TTS_INTEGRATION=1 go test -run '^TestEdgeTTSSynthesisIntegration$' -count=1
 ```
 
-## Giấy phép
-
-Chưa có thông tin giấy phép được khai báo trong repository. Hãy bổ sung tệp `LICENSE` trước khi phát hành hoặc tái phân phối dự án.
+## Giấy phép (License)
+Dự án này được phát hành dưới các điều khoản của giấy phép [GNU General Public License v3.0](LICENSE).
