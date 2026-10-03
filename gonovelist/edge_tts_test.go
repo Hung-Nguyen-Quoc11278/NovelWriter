@@ -78,6 +78,24 @@ func TestEdgeTTSArguments(t *testing.T) {
 	}
 }
 
+func TestVietnameseVoicePresetsMatchAvailableEdgeTTSVoices(t *testing.T) {
+	want := []string{
+		"vi-VN-HoaiMyNeural",
+		"vi-VN-NamMinhNeural",
+	}
+	if len(VietnameseVoicePresets) != len(want) {
+		t.Fatalf("số voice tiếng Việt khả dụng = %d, muốn %d", len(VietnameseVoicePresets), len(want))
+	}
+	for index, voice := range VietnameseVoicePresets {
+		if voice.ID != want[index] {
+			t.Errorf("voice[%d] = %q, muốn %q", index, voice.ID, want[index])
+		}
+		if got := ResolveVoiceIDFromLabel(voice.Label); got != voice.ID {
+			t.Errorf("ResolveVoiceIDFromLabel(%q) = %q, muốn %q", voice.Label, got, voice.ID)
+		}
+	}
+}
+
 func TestSplitTextIntoTTSChunksLimitsLongVietnameseText(t *testing.T) {
 	text := strings.Repeat("ế", 17)
 	chunks := SplitTextIntoTTSChunks(text, 5)

@@ -25,7 +25,7 @@ type VietnameseVoicePreset struct {
 	Description string // Mô tả đặc trưng giọng đọc
 }
 
-// Danh sách các giọng đọc Tiếng Việt chất lượng cao của Edge-TTS
+// Chỉ liệt kê các voice tiếng Việt được endpoint Edge-TTS hiện hỗ trợ.
 var VietnameseVoicePresets = []VietnameseVoicePreset{
 	{
 		ID:          "vi-VN-HoaiMyNeural",
@@ -38,24 +38,6 @@ var VietnameseVoicePresets = []VietnameseVoicePreset{
 		Label:       "Nam Minh (Nam - Miền Nam)",
 		Gender:      "Nam",
 		Description: "Giọng nam miền Nam ấm áp, truyền cảm, rõ chữ — rất thích hợp cho tiểu thuyết lịch sử & phiêu lưu.",
-	},
-	{
-		ID:          "vi-VN-HoangMaiNeural",
-		Label:       "Hoàng Mai (Nữ - Miền Bắc)",
-		Gender:      "Nữ",
-		Description: "Giọng nữ Hà Nội chuẩn mực, thanh lịch, phát âm tròn vành rõ chữ — rất thích hợp cho truyện văn học kinh điển & ký sự.",
-	},
-	{
-		ID:          "vi-VN-NamKhanhNeural",
-		Label:       "Nam Khánh (Nam - Miền Bắc)",
-		Gender:      "Nam",
-		Description: "Giọng nam miền Bắc đĩnh đạc, đầm ấm, quyền uy và cuốn hút — thích hợp cho truyện kỳ ảo, hành động & trinh thám.",
-	},
-	{
-		ID:          "vi-VN-ThuTrangNeural",
-		Label:       "Thu Trang (Nữ - Miền Trung)",
-		Gender:      "Nữ",
-		Description: "Giọng nữ miền Trung nhẹ nhàng, mộc mạc, tha thiết đậm chất thơ — thích hợp cho truyện đồng quê, hồi ức & chiêm nghiệm.",
 	},
 }
 
@@ -563,7 +545,7 @@ func (ui *NovelistUI) ShowAudioExportDialog() {
 	// 6. Xây dựng bố cục Dialog
 	headerBox := container.NewVBox(
 		widget.NewLabelWithStyle("🎧 XUẤT BẢN FILE AUDIO (MP3) — ĐA GIỌNG ĐỌC AI & PHẠM VI LINH HOẠT", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewLabel("Sử dụng Edge-TTS với các giọng đọc tiếng Việt ba miền; ứng dụng ưu tiên công cụ được đóng gói kèm theo."),
+		widget.NewLabel("Sử dụng hai giọng tiếng Việt hiện được Edge-TTS hỗ trợ; ứng dụng ưu tiên công cụ được đóng gói kèm theo."),
 		widget.NewSeparator(),
 	)
 
